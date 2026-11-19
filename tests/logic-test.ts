@@ -261,6 +261,35 @@ console.log("6. 对象上限与绘制不抛错");
   assert(!threw, "绘制一帧不抛错");
 }
 
+console.log("7. 穿过成对红蓝门后不应卡死");
+{
+  const game = new Game(mockPlatform());
+  game.beginRun();
+  // 一直走左道，会吃到 40.5 秒与右道红门成对的 +3 蓝门（约 43.6 秒穿过）
+  game.input.targetX = -3.25;
+  game.input.swiped = true;
+  let threw = false;
+  let threwAt = 0;
+  let err = "";
+  try {
+    // 分小步推进，覆盖倒计时显示 0:47 的那一段（约 43.6 秒）
+    while (game.time < 50) {
+      game.step(1 / 60);
+      game.drawFrame();
+    }
+  } catch (e) {
+    threw = true;
+    threwAt = game.time;
+    err = String(e);
+  }
+  const st = game.getState();
+  assert(!threw, "穿过成对门时不应抛错（在 t=" + threwAt.toFixed(2) + " 抛出: " + err + "）");
+  assert(st.state === "playing" || st.state === "win" || st.state === "fail", "对局仍处于有效状态，得到 " + st.state);
+  assert(st.time >= 50 || st.state !== "playing", "逻辑时间应能推进过 43.6 秒（当前 " + st.time.toFixed(2) + "，状态 " + st.state + "）");
+  assert(st.squadCount >= 4, "一直走左道应已吃到加人门，人数 " + st.squadCount);
+}
+
 console.log("");
 console.log(`通过 ${passed} 项，失败 ${failed} 项`);
+
 if (failed > 0) process.exit(1);

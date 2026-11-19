@@ -294,15 +294,15 @@ export class Game {
   }
 
   private collideGates(): void {
-    const list = this.gates.pool.active;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const g = list[i];
+    // 先复制名单再处理：穿过成对门时会同时移除另一扇，直接按下标扫会读到 undefined 并卡死循环。
+    const list = this.gates.pool.active.slice();
+    for (const g of list) {
+      if (!g || !this.gates.pool.active.includes(g)) continue;
       if (g.z > TEAM_Z + 0.6) continue;
-      const crossed = g.z <= TEAM_Z + 0.6;
-      if (crossed && this.gates.overlaps(g, this.squad.x) && !g.consumed) {
+      if (this.gates.overlaps(g, this.squad.x) && !g.consumed) {
         g.consumed = true;
-        this.applyGate(g);
         const pair = g.pairKey;
+        this.applyGate(g);
         this.gates.pool.release(g);
         if (pair) this.gates.removePair(pair);
       } else if (g.z <= TEAM_Z - 0.8) {
