@@ -28,6 +28,7 @@ interface WxAudioContext {
 
 interface WxMiniProgram {
   createCanvas(): HTMLCanvasElement;
+  createImage(): HTMLImageElement;
   getSystemInfoSync(): WxSystemInfo;
   onTouchStart(cb: (e: WxTouchEvent) => void): void;
   onTouchMove(cb: (e: WxTouchEvent) => void): void;

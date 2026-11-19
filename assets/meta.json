@@ -1,0 +1,170 @@
+{
+  "soldier_pistol_0.png": {
+    "size": [
+      277,
+      360
+    ],
+    "bytes": 56975,
+    "muzzle": [
+      0.9704,
+      0.4588
+    ]
+  },
+  "soldier_pistol_1.png": {
+    "size": [
+      233,
+      360
+    ],
+    "bytes": 52473,
+    "muzzle": [
+      0.9679,
+      0.4073
+    ]
+  },
+  "soldier_smg_0.png": {
+    "size": [
+      266,
+      360
+    ],
+    "bytes": 59858,
+    "muzzle": [
+      0.9669,
+      0.4379
+    ]
+  },
+  "soldier_smg_1.png": {
+    "size": [
+      252,
+      360
+    ],
+    "bytes": 58881,
+    "muzzle": [
+      0.9629,
+      0.4026
+    ]
+  },
+  "walker_0.png": {
+    "size": [
+      295,
+      360
+    ],
+    "bytes": 82383
+  },
+  "walker_1.png": {
+    "size": [
+      285,
+      360
+    ],
+    "bytes": 79070
+  },
+  "sprinter_0.png": {
+    "size": [
+      312,
+      360
+    ],
+    "bytes": 92700
+  },
+  "gate_blue.png": {
+    "size": [
+      402,
+      420
+    ],
+    "bytes": 69415,
+    "hole": [
+      0.4984,
+      0.5363
+    ]
+  },
+  "gate_coral.png": {
+    "size": [
+      420,
+      393
+    ],
+    "bytes": 71002,
+    "hole": [
+      0.5048,
+      0.558
+    ]
+  },
+  "gate_gold.png": {
+    "size": [
+      402,
+      420
+    ],
+    "bytes": 64349,
+    "hole": [
+      0.4963,
+      0.5368
+    ]
+  },
+  "hud_portrait.png": {
+    "size": [
+      215,
+      220
+    ],
+    "bytes": 52229
+  },
+  "icon_smg.png": {
+    "size": [
+      200,
+      134
+    ],
+    "bytes": 18250
+  },
+  "icon_pistol.png": {
+    "size": [
+      200,
+      169
+    ],
+    "bytes": 21800
+  },
+  "tree_0.png": {
+    "size": [
+      196,
+      240
+    ],
+    "bytes": 41910
+  },
+  "tree_1.png": {
+    "size": [
+      201,
+      240
+    ],
+    "bytes": 52004
+  },
+  "house_0.png": {
+    "size": [
+      300,
+      293
+    ],
+    "bytes": 62093
+  },
+  "house_1.png": {
+    "size": [
+      300,
+      296
+    ],
+    "bytes": 62054
+  },
+  "house_2.png": {
+    "size": [
+      300,
+      292
+    ],
+    "bytes": 62913
+  },
+  "house_3.png": {
+    "size": [
+      300,
+      291
+    ],
+    "bytes": 66487
+  },
+  "sky_horizon.jpg": {
+    "size": [
+      1024,
+      576
+    ],
+    "bytes": 31781
+  }
+}

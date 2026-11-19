@@ -1,4 +1,5 @@
 import { createPlatform, type Platform } from "./platform";
+import { preloadAssets } from "./assets";
 import { Game } from "./game";
 
 export interface LukouHooks {
@@ -38,6 +39,7 @@ export function boot(platform?: Platform): Game {
   const plat = platform ?? createPlatform();
   const game = new Game(plat);
   attachHooks(game);
+  void preloadAssets();
   game.startLoop();
   return game;
 }

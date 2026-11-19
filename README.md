@@ -47,7 +47,7 @@ python3 -m http.server 4173 --bind 127.0.0.1
 - 人数硬顶 20。加人或 ×2 超过 20 时补到 20，超出部分转为 3 秒射速加成。
 - HUD 含当前人数、武器图标（冲锋枪会显示剩余时间）和倒计时。开局、失败、通关界面齐全。第一局不插任何广告（广告只留了关闭的空壳）。
 - 70 秒后不再出加人门，用已有人数和枪打完一小波游走体 + 冲刺体即可通关。本阶没有巨型 Boss，也没有厚皮体、霰弹或轻机枪。
-- 角色、门和特效均为 Canvas 程序化绘制的卡通 Q 版。击中为黄白火花，击倒后碎成烟雾或色块粒子并在 0.3 秒内消失。界面文案使用「感染体 / 游走体 / 冲刺体」，不出现「丧尸」「杀戮」「血腥」等词。
+- 角色、门、房屋和界面使用 Q 版粘土风贴图（`assets/`），击中为黄白星星火花，击倒后碎成柔和色块并在 0.3 秒内消失。界面文案使用「感染体 / 游走体 / 冲刺体」，不出现「丧尸」「杀戮」「血腥」等词。
 
 隐私政策与适龄提示目前只是占位页，正式上架前再换成完整文案。
 
@@ -57,7 +57,7 @@ python3 -m http.server 4173 --bind 127.0.0.1
 2. 选择「小游戏」，导入本目录（包含 `game.js`、`game.json`、`project.config.json` 的根目录）。
 3. 把 `project.config.json` 里的 `"appid": "touristappid"` 换成你的小游戏 AppID。也可以在开发者工具的项目设置里填写。还没有 AppID 时，可用测试号 / 游客模式先预览。
 4. 编译模式为「小游戏」，设备方向已在 `game.json` 中设为竖屏 `portrait`。
-5. 正式上传前请先执行 `npm run build`，确保 `game.js` 是最新的。`src/`、`tests/`、`node_modules/`、`index.html` 等已写进 `packOptions.ignore`，不会打进上传包。主包是单文件脚本 + 配置，体积远小于 4MB。
+5. 正式上传前请先执行 `npm run build`，确保 `game.js` 是最新的。`src/`、`tests/`、`node_modules/`、`index.html` 等已写进 `packOptions.ignore`，不会打进上传包。主包为 `game.js`、配置和 `assets/` 贴图，总体积远小于 4MB。
 
 浏览器版入口是 `index.html`；微信小游戏入口是根目录的 `game.js`。两边共用同一套构建产物，平台差异（画布、触摸、本地存储、音频）在 `src/platform.ts` 里做了适配。
 
@@ -82,5 +82,6 @@ lukou-huoli/
   project.config.json     微信项目配置（appid 在此填写）
   src/                    TypeScript 源码
   tests/                  自动验收
+  assets/                 Q 版角色、门、场景与 HUD 贴图
   phase1-spec.md          第一阶规格
 ```

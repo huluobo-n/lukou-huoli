@@ -285,7 +285,7 @@ export class Game {
         const dead = this.enemies.hurt(e, b.damage);
         this.bullets.pool.release(b);
         if (dead) {
-          const color = e.type === "sprinter" ? "#E8A23A" : "#7B8EE8";
+          const color = e.type === "sprinter" ? "#7BA24A" : "#A8D9B8";
           this.particles.puff(e.x, 0.4, e.z, color);
           this.kills += 1;
         }
@@ -343,13 +343,13 @@ export class Game {
       }
       if (e.z <= TEAM_Z + 1.1 && e.z >= TEAM_Z - 1.4) {
         if (this.squad.iframes > 0) {
-          this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#E8A23A" : "#7B8EE8");
+          this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
           this.enemies.pool.release(e);
           continue;
         }
         this.squad.lose(1);
         this.shake = 0.28;
-        this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#E8A23A" : "#7B8EE8");
+        this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
         this.audio.play("red");
         this.enemies.pool.release(e);
         if (this.squad.count <= 0) return;
