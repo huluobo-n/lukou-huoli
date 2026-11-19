@@ -1,0 +1,17 @@
+{
+  "name": "lukou-huoli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "路口火力 — 第一阶可玩版",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --outfile=game.js --format=iife --target=es2018 --sourcemap",
+    "start": "npm run build && python3 -m http.server 4173 --bind 127.0.0.1",
+    "preview": "python3 -m http.server 4173 --bind 127.0.0.1",
+    "test": "npm run build && node tests/run.mjs",
+    "test:browser": "npm run build && node tests/browser-smoke.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "puppeteer-core": "^24.31.0"
+  }
+}

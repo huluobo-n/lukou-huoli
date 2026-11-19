@@ -1,0 +1,30 @@
+{
+  "description": "路口火力 — 第一阶可玩版",
+  "packOptions": {
+    "ignore": [
+      { "type": "folder", "value": "node_modules" },
+      { "type": "folder", "value": "src" },
+      { "type": "folder", "value": "tests" },
+      { "type": "file", "value": "package.json" },
+      { "type": "file", "value": "package-lock.json" },
+      { "type": "file", "value": "tsconfig.json" },
+      { "type": "file", "value": "index.html" },
+      { "type": "file", "value": "README.md" },
+      { "type": "file", "value": "phase1-spec.md" },
+      { "type": "file", "value": "game.js.map" }
+    ]
+  },
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": false,
+    "minified": false,
+    "enhance": true,
+    "compileHotReLoad": false
+  },
+  "compileType": "game",
+  "libVersion": "3.8.0",
+  "appid": "touristappid",
+  "projectname": "路口火力",
+  "condition": {}
+}
