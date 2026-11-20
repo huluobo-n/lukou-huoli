@@ -20,6 +20,7 @@ export const BULLET_RANGE_Z = 50;
 export const MAX_BULLETS = 80;
 export const MAX_ENEMIES = 25;
 export const MAX_SQUAD = 20;
+export const MAX_PROPS = 8;
 
 export const WEAPONS = {
   pistol: {
@@ -62,6 +63,55 @@ export const ENEMY = {
     dashDuration: 0.45,
     dashMul: 2.15,
   },
+  shield: {
+    id: "shield" as const,
+    name: "盾兵",
+    speed: 0.72,
+    hp: 6,
+    radius: 0.9,
+    scale: 1.18,
+    contactLoss: 1,
+    damageTakenMul: 0.5,
+  },
+  bomber: {
+    id: "bomber" as const,
+    name: "爆裂体",
+    speed: 0.88,
+    hp: 4,
+    radius: 0.8,
+    scale: 1.06,
+    contactLoss: 3,
+  },
+  splitter: {
+    id: "splitter" as const,
+    name: "分裂体",
+    speed: 0.95,
+    hp: 4,
+    radius: 0.78,
+    scale: 1.08,
+    contactLoss: 1,
+  },
+  splitling: {
+    id: "splitling" as const,
+    name: "分裂体",
+    speed: 1.15,
+    hp: 2,
+    radius: 0.48,
+    scale: 0.68,
+    contactLoss: 1,
+  },
+  jumper: {
+    id: "jumper" as const,
+    name: "跳跃体",
+    speed: 1.12,
+    hp: 3,
+    radius: 0.58,
+    scale: 0.9,
+    contactLoss: 1,
+    jumpEvery: 2.1,
+    jumpDuration: 0.58,
+    jumpHeight: 2.4,
+  },
 };
 
 export type EnemyId = keyof typeof ENEMY;
@@ -73,7 +123,50 @@ export const HINT_DURATION = 3;
 
 export const STORAGE_KEY = "lukou-huoli-best";
 
-export type GateKind = "add" | "mul" | "weapon" | "red";
+/** 开枪给加减门充能的上限（显示的带符号整数） */
+export const GATE_CHARGE_CAP = 15;
+
+/** 金色子弹增幅门：教学结束后出现在右道中距，固定世界坐标 */
+export const GOLD_GATE_AT = 12;
+export const GOLD_GATE_Z = 36;
+export const GOLD_AMP_MUL = 2;
+export const GOLD_NEAR_MUL = 0.5;
+
+/** 教学结束后，存活越久敌人越肉 */
+export const HP_SCALE_START = 10;
+export const HP_SCALE_PER_SEC = 0.012;
+
+export function enemyHpMul(t: number): number {
+  if (t <= HP_SCALE_START) return 1;
+  return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+}
+
+/** 红预警：先约 35 秒出现，之后间隔逐渐收紧 */
+export const WARNING_FIRST = 35;
+export const WARNING_TELEGRAPH = 1.35;
+export const WARNING_DAMAGE = 5;
+
+export function warningPeriod(t: number): number {
+  return Math.max(14, 20.5 - Math.max(0, t - WARNING_FIRST) * 0.04);
+}
+
+export const CAGE_HP = 8;
+export const CAGE_REWARD = 4;
+export const BARREL_HP = 3;
+export const BARREL_AOE_RADIUS = 3.4;
+export const BARREL_AOE_DAMAGE = 8;
+export const BARREL_CONTACT_LOSS = 2;
+
+export type PropKind = "cage" | "barrel";
+export type PropLane = "left" | "right" | "mid";
+
+export interface PropEvent {
+  time: number;
+  kind: PropKind;
+  lane: PropLane;
+}
+
+export type GateKind = "add" | "mul" | "weapon" | "red" | "amp";
 
 export interface TimelineEvent {
   /** 在远处置入并进入画面的时间（秒） */
@@ -116,10 +209,23 @@ const GATE_EVENTS: TimelineEvent[] = [
 ];
 
 /** 右道红门出现前后短暂让道，避免怪和门叠在同一位置 */
-const RIGHT_LANE_GAPS: Array<[number, number]> = [[39.85, 41.15]];
+export const RIGHT_LANE_GAPS: Array<[number, number]> = [[39.85, 41.15]];
 
-function inRightLaneGap(time: number): boolean {
+export function inRightLaneGap(time: number): boolean {
   return RIGHT_LANE_GAPS.some(([a, b]) => time >= a && time <= b);
+}
+
+export function laneCenterX(lane: "left" | "right" | "mid"): number {
+  if (lane === "mid") return 0;
+  return lane === "left" ? -LANE_X : LANE_X;
+}
+
+export function inLane(x: number, lane: "left" | "right"): boolean {
+  return Math.abs(x - laneCenterX(lane)) <= LANE_HALF;
+}
+
+export function laneOfX(x: number): "left" | "right" {
+  return x < 0 ? "left" : "right";
 }
 
 function addEnemy(events: TimelineEvent[], time: number, enemy: EnemyId): void {
@@ -152,6 +258,12 @@ function buildHorde(): TimelineEvent[] {
     addEnemy(events, t, "walker");
     addEnemy(events, t + 0.1, "sprinter");
   }
+
+  // 新类型在教学段之后逐步登场，不挤在开局 10 秒
+  for (let t = 25; t < 70; t += 3.2) addEnemy(events, t, "jumper");
+  for (let t = 41.3; t < 70; t += 4.0) addEnemy(events, t, "shield");
+  for (let t = 55; t < 70; t += 5.0) addEnemy(events, t, "bomber");
+  for (let t = 70; t <= 87; t += 3.6) addEnemy(events, t, "splitter");
   return events;
 }
 
@@ -181,4 +293,35 @@ export const ENDLESS_GATE_CYCLE: TimelineEvent[] = [
 /** 无尽段成对出怪的间隔，随时间缓慢加密，最短 0.22 秒 */
 export function endlessHordeInterval(t: number): number {
   return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 0.0012);
+}
+
+/** 无尽段轮换出怪，含全部新类型 */
+export const ENDLESS_MIX: EnemyId[] = [
+  "walker",
+  "sprinter",
+  "jumper",
+  "shield",
+  "walker",
+  "sprinter",
+  "bomber",
+  "splitter",
+];
+
+/** 人质笼与油桶：教学结束后少量出现，不淹没既有奖励门 */
+export const PROP_EVENTS: PropEvent[] = [
+  { time: 18.5, kind: "cage", lane: "left" },
+  { time: 24.5, kind: "barrel", lane: "right" },
+  { time: 30.2, kind: "cage", lane: "left" },
+  { time: 45.5, kind: "barrel", lane: "right" },
+  { time: 53.5, kind: "cage", lane: "left" },
+  { time: 60.8, kind: "barrel", lane: "right" },
+];
+
+export const ENDLESS_PROP_START = 76;
+export const ENDLESS_PROP_PERIOD = 16;
+
+export function formatGateLabel(kind: "add" | "red", signed: number): string {
+  if (kind === "red" || signed < 0) return String(signed);
+  if (signed === 0) return "0";
+  return "+" + signed;
 }

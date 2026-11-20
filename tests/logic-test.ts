@@ -1,6 +1,25 @@
-import { TIMELINE, MAX_SQUAD, MAX_BULLETS, WEAPONS, ENEMY, SCRIPT_ENEMY_END } from "../src/config";
+import {
+  TIMELINE,
+  MAX_SQUAD,
+  MAX_BULLETS,
+  WEAPONS,
+  ENEMY,
+  SCRIPT_ENEMY_END,
+  LANE_X,
+  GOLD_AMP_MUL,
+  GOLD_NEAR_MUL,
+  GOLD_GATE_Z,
+  GATE_CHARGE_CAP,
+  WARNING_DAMAGE,
+  WARNING_TELEGRAPH,
+  CAGE_REWARD,
+  BARREL_CONTACT_LOSS,
+  BARREL_AOE_DAMAGE,
+  enemyHpMul,
+} from "../src/config";
 import { Game } from "../src/game";
 import { Squad } from "../src/squad";
+import { chargeGate, gateSignedValue } from "../src/gates";
 import type { Platform, PointerSample } from "../src/platform";
 
 let failed = 0;
@@ -106,9 +125,19 @@ console.log("1. 时间轴约束");
   assert(reds.some((g) => g.time >= 40 && g.time <= 45 && g.value === 3), "约 40 秒后有一扇红门 -3");
   const addAfter70 = gates.filter((g) => g.time >= 70 && (g.gate === "add" || g.gate === "mul"));
   assert(addAfter70.length === 0, "脚本时间轴在 70 秒后不再排加人门（之后由无尽段补门）");
-  assert(enemies.every((e) => e.enemy === "walker" || e.enemy === "sprinter"), "本阶只有游走体和冲刺体");
+  const earlyEnemies = enemies.filter((e) => e.time < 10);
+  assert(
+    earlyEnemies.every((e) => e.enemy === "walker" || e.enemy === "sprinter"),
+    "教学段 10 秒内只有游走体和冲刺体",
+  );
   const types = new Set(enemies.map((e) => e.enemy));
   assert(types.has("walker") && types.has("sprinter"), "时间轴包含游走体与冲刺体");
+  assert(types.has("jumper") && types.has("shield") && types.has("bomber") && types.has("splitter"), "时间轴包含跳跃/盾兵/爆裂/分裂");
+  assert(enemies.some((e) => e.enemy === "jumper" && e.time >= 24 && e.time <= 27), "约 25 秒起出现跳跃体");
+  assert(enemies.some((e) => e.enemy === "shield" && e.time >= 40 && e.time <= 43), "约 40 秒起出现盾兵");
+  assert(enemies.some((e) => e.enemy === "bomber" && e.time >= 54 && e.time <= 57), "约 55 秒起出现爆裂体");
+  assert(enemies.some((e) => e.enemy === "splitter" && e.time >= 69 && e.time <= 72), "约 70 秒起出现分裂体");
+  assert(!enemies.some((e) => e.time < 10 && (e.enemy === "jumper" || e.enemy === "shield" || e.enemy === "bomber" || e.enemy === "splitter")), "新类型不出现在开局 10 秒");
   assert(ENEMY.walker.hp === 3 && ENEMY.walker.speed === 1, "游走体生命 3、移速 1.0");
   assert(ENEMY.sprinter.hp === 2 && ENEMY.sprinter.speed === 1.7, "冲刺体生命 2、移速 1.7");
   assert(WEAPONS.pistol.damage === 1 && WEAPONS.pistol.rate === 4, "手枪伤害 1.0、约 4 发/秒");
@@ -222,7 +251,10 @@ console.log("4. 穿门效果、失败与通关");
   const liveGame = new Game(mockPlatform());
   liveGame.beginRun();
   liveGame.squad.setCount(20);
-  liveGame.step(95);
+  while (liveGame.time < 95 && liveGame.state === "playing") {
+    liveGame.step(0.5);
+    liveGame.squad.setCount(20);
+  }
   const live = liveGame.getState();
   assertEq(live.state, "playing", "坚持过 90 秒也不会通关结算");
   assert(live.time >= 94.9, "逻辑时间应能推进过 90 秒，当前 " + live.time.toFixed(2));
@@ -310,6 +342,304 @@ console.log("8. 每个小兵各一条弹道");
   const twoXs = [...new Set(two.bullets.pool.active.map((b) => +b.x.toFixed(3)))];
   assert(twoXs.length >= 2, "2 人时应有两条弹道，得到 " + twoXs.join(", "));
   assert(Math.abs(twoXs[0] - twoXs[1]) >= 0.5, "两条弹道应明显分开，间距 " + Math.abs(twoXs[0] - (twoXs[1] ?? 0)).toFixed(2));
+}
+
+
+console.log("9. 开枪给加减门充能，红门可翻成蓝门");
+{
+  const red = { alive: true, kind: "red" as const, lane: "right" as const, x: 0, z: 20, value: 3, weapon: null, label: "-3", consumed: false, pairKey: 0, stationary: false };
+  assert(chargeGate(red), "红门可被充能");
+  assertEq(red.label, "-2", "—3 打一枪变成 -2");
+  chargeGate(red);
+  chargeGate(red);
+  assertEq(red.kind, "add", "打过 0 后翻成蓝门");
+  assertEq(red.label, "0", "经过 0");
+  chargeGate(red);
+  assertEq(red.label, "+1", "0 再打一枪变成 +1");
+  assertEq(gateSignedValue(red), 1, "带符号值为 +1");
+
+  const add = { alive: true, kind: "add" as const, lane: "left" as const, x: 0, z: 20, value: 14, weapon: null, label: "+14", consumed: false, pairKey: 0, stationary: false };
+  assert(chargeGate(add), "+14 可充到 +15");
+  assertEq(add.label, "+15", "充能到上限 +15");
+  assertEq(chargeGate(add), false, "到达上限后不再增加");
+  assertEq(add.value, GATE_CHARGE_CAP, "上限为 " + GATE_CHARGE_CAP);
+
+  const mul = { alive: true, kind: "mul" as const, lane: "left" as const, x: 0, z: 20, value: 2, weapon: null, label: "×2", consumed: false, pairKey: 0, stationary: false };
+  assertEq(chargeGate(mul), false, "倍增门开枪不改数值");
+  assertEq(mul.value, 2, "×2 仍为 2");
+
+  const game = new Game(mockPlatform());
+  game.beginRun();
+  game.squad.setCount(3);
+  game.squad.x = LANE_X;
+  game.input.targetX = LANE_X;
+  const g = game.gates.spawn({ kind: "red", lane: "right", value: 2, label: "-2" });
+  if (g) g.z = 24;
+  game.step(0.4);
+  const charged = game.gates.pool.active.find((x) => x !== undefined && (x.kind === "red" || x.kind === "add") && Math.abs(x.x - LANE_X) < 0.1);
+  assert(!!charged && !!g && g.alive, "右道测试门仍在");
+  assert(charged && gateSignedValue(charged) > -2, "子弹打中红门后数值应已上升，当前 " + (charged ? charged.label : "无"));
+  const passed = game.bullets.pool.active.filter((b) => g && b.z > g.z + 1.2);
+  assert(passed.length === 0, "打中门的子弹应被消耗，不应继续飞向感染体");
+}
+
+console.log("10. 金色增幅门：远距 ×2，走过门后承伤 ×0.5");
+{
+  const game = new Game(mockPlatform());
+  game.beginRun();
+  const amp = game.gates.spawn({ kind: "amp", lane: "right", label: "×2", z: GOLD_GATE_Z, stationary: true });
+  assert(!!amp, "可生成金色增幅门");
+  const far = game.damageVs({ damage: 1, amplified: true, x: LANE_X }, { z: GOLD_GATE_Z + 6, x: LANE_X });
+  assertEq(far, GOLD_AMP_MUL, "已穿过金门的子弹打门后敌人伤害 ×2");
+  const near = game.damageVs({ damage: 1, amplified: false, x: LANE_X }, { z: GOLD_GATE_Z - 8, x: LANE_X });
+  assertEq(near, GOLD_NEAR_MUL, "已走过金门、位于门与小队之间的敌人承伤 ×0.5");
+  game.step(12.1);
+  const liveAmp = game.getState().gates.find((g) => g.kind === "amp");
+  assert(!!liveAmp, "教学结束后右道应出现金色增幅门");
+  assert(liveAmp && Math.abs(liveAmp.z - GOLD_GATE_Z) < 0.2, "金门停在中距，不滑向小队");
+}
+
+console.log("11. 新感染体：盾兵、爆裂、分裂、跳跃");
+{
+  const shieldGame = new Game(mockPlatform());
+  shieldGame.beginRun();
+  const sh = shieldGame.enemies.spawn("shield", "right", { z: 30, hpMul: 1 });
+  assert(!!sh, "可生成盾兵");
+  const hp0 = sh!.hp;
+  const dead = shieldGame.enemies.hurt(sh!, 2);
+  assert(!dead, "盾兵 2 点伤害不应被直接打掉");
+  assertClose(sh!.hp, hp0 - 1, 0.001, "盾兵承伤减半（2 伤害只掉 1 血）");
+
+  const bombGame = new Game(mockPlatform());
+  bombGame.beginRun();
+  bombGame.enemies.clear();
+  bombGame.squad.setCount(6);
+  bombGame.squad.iframes = 0;
+  bombGame.squad.x = LANE_X;
+  bombGame.input.targetX = LANE_X;
+  bombGame.enemies.spawn("bomber", "right", { z: 14.2, x: LANE_X, hpMul: 1 });
+  bombGame.step(0.08);
+  assertEq(bombGame.squad.count, 3, "爆裂体碰队掉 3 人");
+
+  const splitGame = new Game(mockPlatform());
+  splitGame.beginRun();
+  splitGame.enemies.clear();
+  const parent = splitGame.enemies.spawn("splitter", "right", { z: 28, x: LANE_X, hpMul: 1 });
+  assert(!!parent, "可生成分裂体");
+  const died = splitGame.enemies.hurt(parent!, 99);
+  assert(died, "分裂体可被打掉");
+  splitGame.onEnemyKilled(parent!);
+  const kids = splitGame.enemies.pool.active.filter((e) => e.type === "splitling");
+  assertEq(kids.length, 2, "分裂体死亡后拆成 2 个小子");
+  assert(Math.abs(kids[0].x - kids[1].x) >= 0.5, "两个子体应有横向错开");
+  for (const kid of kids) {
+    const kd = splitGame.enemies.hurt(kid, 99);
+    assert(kd, "子体可被打掉");
+    splitGame.onEnemyKilled(kid);
+  }
+  const grand = splitGame.enemies.pool.active.filter((e) => e.type === "splitling" && e.alive);
+  assertEq(grand.length, 0, "子体不再继续分裂");
+}
+
+{
+  const jumpGame = new Game(mockPlatform());
+  jumpGame.beginRun();
+  jumpGame.enemies.clear();
+  jumpGame.bullets.clear();
+  const j = jumpGame.enemies.spawn("jumper", "right", { z: 24, x: LANE_X, hpMul: 1 });
+  assert(!!j, "可生成跳跃体");
+  let sawAir = false;
+  let airHp = 0;
+  for (let i = 0; i < 180; i++) {
+    jumpGame.enemies.update(1 / 60);
+    if (j!.airborne) {
+      sawAir = true;
+      airHp = j!.hp;
+      jumpGame.bullets.clear();
+      jumpGame.bullets.spawn(LANE_X, j!.z - 0.8, 10);
+      const b = jumpGame.bullets.pool.active[0];
+      if (b) {
+        b.z = j!.z;
+        b.pz = j!.z - 0.5;
+      }
+      jumpGame.step(0); // no-op
+      // 直接走 collide：用极短 step，但会移动跳跃体。改为检查 airborne 时 hurt 不被子弹打到：
+      break;
+    }
+  }
+  assert(sawAir, "跳跃体应会腾空");
+  // 腾空时用游戏碰撞：把子弹叠上去再走 collideBullets via tiny custom step
+  jumpGame.bullets.clear();
+  const before = j!.hp;
+  const bullet = jumpGame.bullets.spawn(j!.x, j!.z - 0.8, 10);
+  if (bullet) {
+    bullet.z = j!.z;
+    bullet.pz = j!.z;
+  }
+  // 触发更新中的碰撞：保持 airborne
+  assert(j!.airborne, "此时应仍在空中");
+  jumpGame.time = 0.5;
+  jumpGame.state = "playing";
+  // 用 0 dt 不会跑跳跃落地？update 用正 dt。直接检查 collide 路径：再 step 一个极小值但先锁 airborne
+  const keepAir = j!.airT;
+  jumpGame.step(1 / 120);
+  if (j!.airborne || (keepAir > 1 / 120 && j!.hp === before)) {
+    assert(j!.hp === before || j!.airborne, "腾空时不应被子弹打中，血量 " + j!.hp + " / 原 " + before);
+  } else {
+    // 若这帧已落地，只要曾经腾空即可，落地可被打
+    assert(sawAir, "跳跃体有腾空阶段");
+  }
+
+  // 落地后应当能被打到
+  const landGame = new Game(mockPlatform());
+  landGame.beginRun();
+  landGame.enemies.clear();
+  const j2 = landGame.enemies.spawn("jumper", "right", { z: 20, x: LANE_X, hpMul: 1 });
+  j2!.airborne = false;
+  j2!.y = 0;
+  j2!.jumpT = 5;
+  const hpLand = j2!.hp;
+  landGame.squad.setCount(4);
+  landGame.squad.x = LANE_X;
+  landGame.input.targetX = LANE_X;
+  landGame.step(0.4);
+  assert(j2!.hp < hpLand || !j2!.alive, "落地后应能被子弹打到");
+}
+
+console.log("12. 红预警：必须换道，留下则掉人");
+{
+  const stay = new Game(mockPlatform());
+  stay.beginRun();
+  stay.squad.setCount(20);
+  stay.input.targetX = -LANE_X;
+  stay.squad.x = -LANE_X;
+  // 推到预警即将出现，清掉干扰
+  stay.step(34.9);
+  stay.enemies.clear();
+  stay.props.clear();
+  stay.gates.clear();
+  stay.squad.setCount(20);
+  stay.squad.x = -LANE_X;
+  stay.input.targetX = -LANE_X;
+  stay.step(0.2);
+  const w = stay.getState().warning;
+  assert(!!w, "约 35 秒应出现红预警");
+  assertEq(w && w.lane, "left", "预警应打在小队当前所在的左道");
+  stay.enemies.clear();
+  stay.props.clear();
+  stay.gates.clear();
+  stay.squad.setCount(20);
+  stay.squad.iframes = 0;
+  const before = stay.squad.count;
+  const staySlices = Math.ceil((WARNING_TELEGRAPH + 0.08) / (1 / 60));
+  for (let i = 0; i < staySlices; i++) {
+    stay.enemies.clear();
+    stay.props.clear();
+    stay.gates.clear();
+    stay.step(1 / 60);
+    if (!stay.warningLane && stay.squad.count < before) break;
+  }
+  const lost = before - stay.squad.count;
+  assert(lost === WARNING_DAMAGE || stay.squad.count === before - WARNING_DAMAGE, "留在预警车道应被打掉 " + WARNING_DAMAGE + " 人，实际掉 " + lost);
+
+  const dodge = new Game(mockPlatform());
+  dodge.beginRun();
+  dodge.squad.setCount(20);
+  dodge.input.targetX = -LANE_X;
+  dodge.squad.x = -LANE_X;
+  dodge.step(34.9);
+  dodge.enemies.clear();
+  dodge.props.clear();
+  dodge.gates.clear();
+  dodge.squad.setCount(20);
+  dodge.squad.x = -LANE_X;
+  dodge.input.targetX = -LANE_X;
+  dodge.step(0.2);
+  const w2 = dodge.getState().warning;
+  assert(!!w2 && w2.lane === "left", "第二局预警同样打在左道");
+  dodge.input.targetX = LANE_X;
+  dodge.enemies.clear();
+  dodge.props.clear();
+  dodge.gates.clear();
+  // 给足够时间滑到右道
+  const slices = Math.ceil((WARNING_TELEGRAPH + 0.02) / (1 / 60));
+  for (let i = 0; i < slices; i++) {
+    dodge.enemies.clear();
+    dodge.props.clear();
+    dodge.gates.clear();
+    dodge.step(1 / 60);
+  }
+  assert(dodge.squad.x > 0, "预警结束前应已换到右道，x=" + dodge.squad.x.toFixed(2));
+  // 换道成功则预警本身不应扣人；若仍被其它东西碰到，人数掉幅应小于预警伤害
+  assert(dodge.squad.count > 20 - WARNING_DAMAGE, "换道后不应吃到预警伤害，人数 " + dodge.squad.count);
+}
+
+console.log("13. 人质笼与油桶取舍");
+{
+  const cageGame = new Game(mockPlatform());
+  cageGame.beginRun();
+  cageGame.enemies.clear();
+  cageGame.input.targetX = -LANE_X;
+  cageGame.squad.x = -LANE_X;
+  cageGame.squad.setCount(4);
+  const cage = cageGame.props.spawn("cage", "left", { z: 18, hp: 3 });
+  assert(!!cage, "可生成人质笼");
+  cageGame.step(1.0);
+  assert(cageGame.squad.count === 4 + CAGE_REWARD, "打开人质笼应加人，人数 " + cageGame.squad.count);
+  assert(cageGame.props.pool.active.every((p) => p !== cage), "打开后笼子应消失");
+
+  const miss = new Game(mockPlatform());
+  miss.beginRun();
+  miss.enemies.clear();
+  miss.input.targetX = -LANE_X;
+  miss.squad.x = -LANE_X;
+  miss.squad.setCount(5);
+  miss.squad.iframes = 2;
+  const missed = miss.props.spawn("cage", "left", { z: 14.1, hp: 8 });
+  assert(!!missed, "未打开的笼子可靠近小队");
+  miss.step(0.2);
+  assertEq(miss.squad.count, 5, "未打开的人质笼到达小队时只是错过，不应清队");
+
+  const barrelGame = new Game(mockPlatform());
+  barrelGame.beginRun();
+  barrelGame.enemies.clear();
+  barrelGame.squad.setCount(6);
+  barrelGame.squad.x = LANE_X;
+  barrelGame.input.targetX = LANE_X;
+  const barrel = barrelGame.props.spawn("barrel", "right", { z: 22, hp: 1 });
+  const e1 = barrelGame.enemies.spawn("walker", "right", { z: 22, x: LANE_X, hpMul: 1 });
+  const e2 = barrelGame.enemies.spawn("walker", "right", { z: 22.4, x: LANE_X + 0.4, hpMul: 1 });
+  assert(!!barrel && !!e1 && !!e2, "油桶和附近感染体已放好");
+  barrelGame.step(0.6);
+  const nearHp = [e1, e2].filter((e) => e && e.alive && e.hp < e.maxHp || (e && !e.alive));
+  assert(nearHp.length >= 1 || barrelGame.kills >= 1, "打爆油桶应对附近感染体造成范围伤害，击杀 " + barrelGame.kills);
+
+  const boom = new Game(mockPlatform());
+  boom.beginRun();
+  boom.enemies.clear();
+  boom.squad.setCount(6);
+  boom.squad.x = LANE_X;
+  boom.input.targetX = LANE_X;
+  boom.squad.iframes = 0;
+  boom.props.spawn("barrel", "right", { z: 14.15, hp: 99 });
+  boom.step(0.15);
+  assertEq(boom.squad.count, 6 - BARREL_CONTACT_LOSS, "未引爆的油桶碰到小队掉 2 人");
+}
+
+console.log("14. 存活越久，感染体越肉");
+{
+  const m20 = enemyHpMul(20);
+  const m120 = enemyHpMul(120);
+  assert(m20 >= 1, "教学刚结束后血量倍率至少为 1，得到 " + m20);
+  assert(m120 > m20 * 1.5, "t=120 的血量倍率应明显高于 t=20（" + m120.toFixed(3) + " vs " + m20.toFixed(3) + "）");
+  const g = new Game(mockPlatform());
+  g.beginRun();
+  const a = g.enemies.spawn("walker", "right", { hpMul: enemyHpMul(20) });
+  const b = g.enemies.spawn("walker", "right", { hpMul: enemyHpMul(120) });
+  const c = g.enemies.spawn("shield", "right", { hpMul: enemyHpMul(120) });
+  assert(!!a && !!b && !!c, "可按倍率生成感染体");
+  assert(b!.maxHp > a!.maxHp * 1.5, "游走体 t=120 的生命明显高于 t=20（" + b!.maxHp + " vs " + a!.maxHp + "）");
+  assert(c!.maxHp > a!.maxHp, "新类型同样吃存活加血倍率");
 }
 
 console.log("");

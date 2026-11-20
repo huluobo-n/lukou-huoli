@@ -19,6 +19,7 @@
   var MAX_BULLETS = 80;
   var MAX_ENEMIES = 25;
   var MAX_SQUAD = 20;
+  var MAX_PROPS = 8;
   var WEAPONS = {
     pistol: {
       id: "pistol",
@@ -56,12 +57,84 @@
       dashEvery: 1.8,
       dashDuration: 0.45,
       dashMul: 2.15
+    },
+    shield: {
+      id: "shield",
+      name: "\u76FE\u5175",
+      speed: 0.72,
+      hp: 6,
+      radius: 0.9,
+      scale: 1.18,
+      contactLoss: 1,
+      damageTakenMul: 0.5
+    },
+    bomber: {
+      id: "bomber",
+      name: "\u7206\u88C2\u4F53",
+      speed: 0.88,
+      hp: 4,
+      radius: 0.8,
+      scale: 1.06,
+      contactLoss: 3
+    },
+    splitter: {
+      id: "splitter",
+      name: "\u5206\u88C2\u4F53",
+      speed: 0.95,
+      hp: 4,
+      radius: 0.78,
+      scale: 1.08,
+      contactLoss: 1
+    },
+    splitling: {
+      id: "splitling",
+      name: "\u5206\u88C2\u4F53",
+      speed: 1.15,
+      hp: 2,
+      radius: 0.48,
+      scale: 0.68,
+      contactLoss: 1
+    },
+    jumper: {
+      id: "jumper",
+      name: "\u8DF3\u8DC3\u4F53",
+      speed: 1.12,
+      hp: 3,
+      radius: 0.58,
+      scale: 0.9,
+      contactLoss: 1,
+      jumpEvery: 2.1,
+      jumpDuration: 0.58,
+      jumpHeight: 2.4
     }
   };
   var HIT_IFRAMES = 0.85;
   var OVERFLOW_BONUS_DURATION = 3;
   var OVERFLOW_BONUS_MUL = 1.6;
   var STORAGE_KEY = "lukou-huoli-best";
+  var GATE_CHARGE_CAP = 15;
+  var GOLD_GATE_AT = 12;
+  var GOLD_GATE_Z = 36;
+  var GOLD_AMP_MUL = 2;
+  var GOLD_NEAR_MUL = 0.5;
+  var HP_SCALE_START = 10;
+  var HP_SCALE_PER_SEC = 0.012;
+  function enemyHpMul(t) {
+    if (t <= HP_SCALE_START) return 1;
+    return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+  }
+  var WARNING_FIRST = 35;
+  var WARNING_TELEGRAPH = 1.35;
+  var WARNING_DAMAGE = 5;
+  function warningPeriod(t) {
+    return Math.max(14, 20.5 - Math.max(0, t - WARNING_FIRST) * 0.04);
+  }
+  var CAGE_HP = 8;
+  var CAGE_REWARD = 4;
+  var BARREL_HP = 3;
+  var BARREL_AOE_RADIUS = 3.4;
+  var BARREL_AOE_DAMAGE = 8;
+  var BARREL_CONTACT_LOSS = 2;
   var GATE_EVENTS = [
     // —— 0–10 秒教学 ——
     { time: 6, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
@@ -86,6 +159,16 @@
   function inRightLaneGap(time) {
     return RIGHT_LANE_GAPS.some(([a, b]) => time >= a && time <= b);
   }
+  function laneCenterX(lane) {
+    if (lane === "mid") return 0;
+    return lane === "left" ? -LANE_X : LANE_X;
+  }
+  function inLane(x, lane) {
+    return Math.abs(x - laneCenterX(lane)) <= LANE_HALF;
+  }
+  function laneOfX(x) {
+    return x < 0 ? "left" : "right";
+  }
   function addEnemy(events, time, enemy) {
     const t = Math.round(time * 100) / 100;
     if (inRightLaneGap(t)) return;
@@ -104,6 +187,10 @@
       addEnemy(events, t, "walker");
       addEnemy(events, t + 0.1, "sprinter");
     }
+    for (let t = 25; t < 70; t += 3.2) addEnemy(events, t, "jumper");
+    for (let t = 41.3; t < 70; t += 4) addEnemy(events, t, "shield");
+    for (let t = 55; t < 70; t += 5) addEnemy(events, t, "bomber");
+    for (let t = 70; t <= 87; t += 3.6) addEnemy(events, t, "splitter");
     return events;
   }
   var TIMELINE = [...GATE_EVENTS, ...buildHorde()].sort((a, b) => {
@@ -125,6 +212,31 @@
   ];
   function endlessHordeInterval(t) {
     return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 12e-4);
+  }
+  var ENDLESS_MIX = [
+    "walker",
+    "sprinter",
+    "jumper",
+    "shield",
+    "walker",
+    "sprinter",
+    "bomber",
+    "splitter"
+  ];
+  var PROP_EVENTS = [
+    { time: 18.5, kind: "cage", lane: "left" },
+    { time: 24.5, kind: "barrel", lane: "right" },
+    { time: 30.2, kind: "cage", lane: "left" },
+    { time: 45.5, kind: "barrel", lane: "right" },
+    { time: 53.5, kind: "cage", lane: "left" },
+    { time: 60.8, kind: "barrel", lane: "right" }
+  ];
+  var ENDLESS_PROP_START = 76;
+  var ENDLESS_PROP_PERIOD = 16;
+  function formatGateLabel(kind, signed) {
+    if (kind === "red" || signed < 0) return String(signed);
+    if (signed === 0) return "0";
+    return "+" + signed;
   }
 
   // src/platform.ts
@@ -624,6 +736,7 @@
   // src/bullets.ts
   function resetB(b) {
     b.alive = false;
+    b.amplified = false;
   }
   var Bullets = class {
     constructor() {
@@ -632,7 +745,9 @@
         x: 0,
         y: 0.8,
         z: TEAM_Z,
-        damage: 1
+        pz: TEAM_Z,
+        damage: 1,
+        amplified: false
       }), resetB);
     }
     clear() {
@@ -645,13 +760,16 @@
       b.x = x;
       b.y = 0.85;
       b.z = z + 0.8;
+      b.pz = b.z;
       b.damage = damage;
+      b.amplified = false;
       return b;
     }
     update(dt) {
       const list = this.pool.active;
       for (let i = list.length - 1; i >= 0; i--) {
         const b = list[i];
+        b.pz = b.z;
         b.z += BULLET_SPEED * dt;
         if (b.z >= BULLET_RANGE_Z || !b.alive) this.pool.releaseAt(i);
       }
@@ -662,6 +780,9 @@
   function resetE(e) {
     e.alive = false;
     e.hp = 0;
+    e.airborne = false;
+    e.isChild = false;
+    e.y = 0;
   }
   var Enemies = class {
     constructor() {
@@ -678,30 +799,40 @@
         dashT: 0,
         dashing: 0,
         walk: 0,
-        hitFlash: 0
+        hitFlash: 0,
+        airborne: false,
+        jumpT: 0,
+        airT: 0,
+        isChild: false
       }), resetE);
     }
     clear() {
       this.pool.clear();
     }
-    spawn(type, lane) {
+    spawn(type, lane, opts) {
+      var _a, _b, _c;
       const e = this.pool.acquire();
       if (!e) return null;
       const def = ENEMY[type];
+      const mul = Math.max(0.01, (_a = opts == null ? void 0 : opts.hpMul) != null ? _a : 1);
       e.alive = true;
       e.type = type;
       const slot = this.pool.size % 3;
-      e.x = (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
+      e.x = (_b = opts == null ? void 0 : opts.x) != null ? _b : (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
       e.y = 0;
-      e.z = SPAWN_Z;
-      e.hp = def.hp;
-      e.maxHp = def.hp;
+      e.z = (_c = opts == null ? void 0 : opts.z) != null ? _c : SPAWN_Z;
+      e.hp = def.hp * mul;
+      e.maxHp = def.hp * mul;
       e.radius = def.radius;
       e.age = 0;
       e.dashT = type === "sprinter" ? 0.8 : 0;
       e.dashing = 0;
       e.walk = 0;
       e.hitFlash = 0;
+      e.airborne = false;
+      e.airT = 0;
+      e.jumpT = type === "jumper" ? 0.35 + slot * 0.4 : 0;
+      e.isChild = !!(opts == null ? void 0 : opts.isChild);
       return e;
     }
     update(dt) {
@@ -725,12 +856,40 @@
             }
           }
         }
+        if (e.type === "jumper") {
+          this.updateJumper(e, dt);
+        }
         e.z -= BASE_SPEED * def.speed * mul * dt;
         if (e.z < DESPAWN_Z || !e.alive) this.pool.releaseAt(i);
       }
     }
+    updateJumper(e, dt) {
+      const every = ENEMY.jumper.jumpEvery;
+      const dur = ENEMY.jumper.jumpDuration;
+      const height = ENEMY.jumper.jumpHeight;
+      if (e.airborne) {
+        e.airT -= dt;
+        const t = 1 - Math.max(0, e.airT) / dur;
+        e.y = 4 * height * t * (1 - t);
+        if (e.airT <= 0) {
+          e.airborne = false;
+          e.y = 0;
+          e.jumpT = every;
+        }
+      } else {
+        e.y = 0;
+        e.jumpT -= dt;
+        if (e.jumpT <= 0) {
+          e.airborne = true;
+          e.airT = dur;
+        }
+      }
+    }
+    /** 造成伤害。盾兵承伤减半。生命降至 0 返回 true。 */
     hurt(e, dmg) {
-      e.hp -= dmg;
+      var _a;
+      const takenMul = "damageTakenMul" in ENEMY[e.type] ? (_a = ENEMY[e.type].damageTakenMul) != null ? _a : 1 : 1;
+      e.hp -= dmg * takenMul;
       e.hitFlash = 0.08;
       if (e.hp <= 0) {
         e.alive = false;
@@ -744,6 +903,27 @@
   function resetG(g) {
     g.alive = false;
     g.consumed = false;
+    g.stationary = false;
+  }
+  function gateSignedValue(g) {
+    if (g.kind === "red") return -g.value;
+    return g.value;
+  }
+  function chargeGate(g, cap = GATE_CHARGE_CAP) {
+    if (g.kind !== "add" && g.kind !== "red") return false;
+    const current = gateSignedValue(g);
+    if (current >= cap) return false;
+    const signed = current + 1;
+    if (signed >= 0) {
+      g.kind = "add";
+      g.value = signed;
+      g.label = formatGateLabel("add", signed);
+    } else {
+      g.kind = "red";
+      g.value = -signed;
+      g.label = formatGateLabel("red", signed);
+    }
+    return true;
   }
   var Gates = class {
     constructor() {
@@ -757,7 +937,8 @@
         weapon: null,
         label: "",
         consumed: false,
-        pairKey: 0
+        pairKey: 0,
+        stationary: false
       }), resetG);
       this.pairSeq = 1;
     }
@@ -767,19 +948,20 @@
     }
     /** 同一时刻两道的门使用相同 pairKey，走过一道则另一道消失 */
     spawn(opts) {
-      var _a, _b, _c;
+      var _a, _b, _c, _d;
       const g = this.pool.acquire();
       if (!g) return null;
       g.alive = true;
       g.kind = opts.kind;
       g.lane = opts.lane;
       g.x = opts.lane === "left" ? -LANE_X : LANE_X;
-      g.z = SPAWN_Z;
-      g.value = (_a = opts.value) != null ? _a : 0;
-      g.weapon = (_b = opts.weapon) != null ? _b : null;
+      g.z = (_a = opts.z) != null ? _a : SPAWN_Z;
+      g.value = (_b = opts.value) != null ? _b : 0;
+      g.weapon = (_c = opts.weapon) != null ? _c : null;
       g.label = opts.label;
       g.consumed = false;
-      g.pairKey = (_c = opts.pairKey) != null ? _c : 0;
+      g.pairKey = (_d = opts.pairKey) != null ? _d : 0;
+      g.stationary = !!opts.stationary;
       return g;
     }
     nextPairKey() {
@@ -789,8 +971,8 @@
       const list = this.pool.active;
       for (let i = list.length - 1; i >= 0; i--) {
         const g = list[i];
-        g.z -= BASE_SPEED * dt;
-        if (g.z < DESPAWN_Z || !g.alive) this.pool.releaseAt(i);
+        if (!g.stationary) g.z -= BASE_SPEED * dt;
+        if (!g.stationary && g.z < DESPAWN_Z || !g.alive) this.pool.releaseAt(i);
       }
     }
     removePair(pairKey) {
@@ -802,6 +984,9 @@
     }
     overlaps(gate, teamX) {
       return Math.abs(gate.x - teamX) <= LANE_HALF;
+    }
+    ampGates() {
+      return this.pool.active.filter((g) => g.kind === "amp" && g.alive);
     }
   };
 
@@ -929,6 +1114,24 @@
         p.color = i < 4 ? "#D9DEE8" : color;
       }
     }
+    burst(x, y, z, color) {
+      for (let i = 0; i < 16; i++) {
+        const p = this.pool.acquire();
+        if (!p) return;
+        p.alive = true;
+        p.kind = i % 3 === 0 ? "spark" : "puff";
+        p.x = x + (i % 5 - 2) * 0.16;
+        p.y = y + 0.5;
+        p.z = z;
+        const a = i / 16 * Math.PI * 2;
+        p.vx = Math.cos(a) * (2.8 + i % 4 * 0.7);
+        p.vy = 2.2 + i % 3 * 0.9;
+        p.vz = Math.sin(a) * 2.2;
+        p.maxLife = p.life = 0.32;
+        p.size = i % 2 === 0 ? 12 : 8;
+        p.color = i % 2 === 0 ? "#FFE27A" : color;
+      }
+    }
     update(dt) {
       const list = this.pool.active;
       for (let i = list.length - 1; i >= 0; i--) {
@@ -940,6 +1143,63 @@
         p.vy -= 8 * dt;
         if (p.life <= 0) this.pool.releaseAt(i);
       }
+    }
+  };
+
+  // src/props.ts
+  function resetP2(p) {
+    p.alive = false;
+    p.opened = false;
+  }
+  var Props = class {
+    constructor() {
+      this.pool = new Pool(MAX_PROPS, () => ({
+        alive: false,
+        kind: "barrel",
+        lane: "right",
+        x: 0,
+        z: SPAWN_Z,
+        hp: 3,
+        maxHp: 3,
+        radius: 0.9,
+        opened: false
+      }), resetP2);
+    }
+    clear() {
+      this.pool.clear();
+    }
+    spawn(kind, lane, opts) {
+      var _a, _b;
+      const p = this.pool.acquire();
+      if (!p) return null;
+      p.alive = true;
+      p.kind = kind;
+      p.lane = lane;
+      p.x = laneCenterX(lane);
+      p.z = (_a = opts == null ? void 0 : opts.z) != null ? _a : SPAWN_Z;
+      p.maxHp = (_b = opts == null ? void 0 : opts.hp) != null ? _b : kind === "cage" ? CAGE_HP : BARREL_HP;
+      p.hp = p.maxHp;
+      p.radius = kind === "cage" ? 1.15 : 0.95;
+      p.opened = false;
+      return p;
+    }
+    update(dt) {
+      const list = this.pool.active;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        p.z -= BASE_SPEED * dt;
+        if (p.z < DESPAWN_Z || !p.alive) this.pool.releaseAt(i);
+      }
+    }
+    hurt(p, dmg) {
+      p.hp -= dmg;
+      if (p.hp <= 0) {
+        p.hp = 0;
+        p.opened = true;
+        p.alive = false;
+        return true;
+      }
+      return false;
     }
   };
 
@@ -1121,7 +1381,7 @@
   function drawGate(ctx, g, camX) {
     const p = pr(g.x, 0, g.z, camX);
     const k = p.scale;
-    const id = g.kind === "red" ? "gate_coral" : g.kind === "weapon" ? "gate_gold" : "gate_blue";
+    const id = g.kind === "red" ? "gate_coral" : g.kind === "weapon" || g.kind === "amp" ? "gate_gold" : "gate_blue";
     const h = 210 * k;
     const img = getSprite(id);
     if (img) {
@@ -1135,13 +1395,13 @@
         const icon = getSprite("icon_smg") ? "icon_smg" : "icon_pistol";
         drawSprite(ctx, icon, hx, hy + iconH * 0.45, iconH);
       } else {
-        drawGateLabel(ctx, g.label, hx, hy, k, g.kind === "red");
+        drawGateLabel(ctx, g.label, hx, hy, k, g.kind === "red", g.kind === "amp");
       }
       return;
     }
     fallbackGate(ctx, p.sx, p.sy, k, g);
   }
-  function drawGateLabel(ctx, label, x, y, k, danger) {
+  function drawGateLabel(ctx, label, x, y, k, danger, gold = false) {
     const fontSize = Math.max(16, (label.length > 2 ? 44 : 54) * k);
     ctx.save();
     ctx.textAlign = "center";
@@ -1150,9 +1410,9 @@
     ctx.lineJoin = "round";
     ctx.miterLimit = 2;
     ctx.lineWidth = Math.max(3, fontSize * 0.14);
-    ctx.strokeStyle = danger ? "rgba(110,30,30,0.45)" : "rgba(25,50,110,0.4)";
+    ctx.strokeStyle = danger ? "rgba(110,30,30,0.45)" : gold ? "rgba(120,70,10,0.5)" : "rgba(25,50,110,0.4)";
     ctx.strokeText(label, x, y);
-    ctx.fillStyle = "#FFFFFF";
+    ctx.fillStyle = gold ? "#FFF4B8" : "#FFFFFF";
     ctx.fillText(label, x, y);
     ctx.restore();
   }
@@ -1163,7 +1423,7 @@
     const y = sy - h;
     let frame = "#3B82F6";
     if (g.kind === "red") frame = "#E5736A";
-    else if (g.kind === "weapon") frame = "#F0C033";
+    else if (g.kind === "weapon" || g.kind === "amp") frame = "#F0C033";
     ctx.strokeStyle = frame;
     ctx.lineWidth = Math.max(6, 16 * k);
     ctx.lineCap = "round";
@@ -1173,11 +1433,12 @@
     ctx.lineTo(x + w - 10 * k, sy - 8 * k);
     ctx.stroke();
     if (g.kind === "weapon") return;
-    drawGateLabel(ctx, g.label, sx, y + h * 0.5, k, g.kind === "red");
+    drawGateLabel(ctx, g.label, sx, y + h * 0.5, k, g.kind === "red", g.kind === "amp");
   }
   function drawEnemy(ctx, e, camX) {
-    const p = pr(e.x, 0, e.z, camX);
+    const p = pr(e.x, e.y, e.z, camX);
     const def = ENEMY[e.type];
+    const stretch = e.type === "jumper" && e.airborne ? 1 + Math.min(0.45, e.y * 0.18) : 1;
     const k = p.scale * def.scale;
     const lean = e.type === "sprinter" && e.dashing > 0 ? 10 * k : e.type === "sprinter" ? 4 * k : 0;
     ctx.save();
@@ -1191,14 +1452,87 @@
       if (!drawSprite(ctx, "sprinter_0", 0, 0, h, { flash })) {
         fallbackEnemy(ctx, k, true, flash);
       }
-    } else {
+    } else if (e.type === "walker") {
       const frame = Math.sin(e.walk) >= 0 ? "walker_0" : "walker_1";
       const h = 122 * k;
       if (!drawSprite(ctx, frame, 0, 0, h, { flash })) {
         fallbackEnemy(ctx, k, false, flash);
       }
+    } else {
+      drawSpecialEnemy(ctx, e, k * stretch, flash);
     }
     ctx.restore();
+  }
+  function clayBody(ctx, k, flash, color, bodyW, bodyH, headR, headY) {
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : color;
+    drawEllipse(ctx, 0, -bodyH * 0.45 * k, bodyW * k, bodyH * 0.55 * k);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, -headY * k, headR * k, 0, Math.PI * 2);
+    ctx.fill();
+    if (flash <= 0) {
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.beginPath();
+      ctx.ellipse(-headR * 0.28 * k, -headY * k - headR * 0.22 * k, headR * 0.28 * k, headR * 0.18 * k, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  function drawSpecialEnemy(ctx, e, k, flash) {
+    if (e.type === "shield") {
+      clayBody(ctx, k, flash, "#8FB88A", 24, 50, 16, 58);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#D7B07A";
+      roundRect(ctx, -22 * k, -54 * k, 28 * k, 42 * k, 10 * k);
+      ctx.fill();
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#E8C992";
+      ctx.beginPath();
+      ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(110,70,30,0.35)";
+      ctx.lineWidth = Math.max(1.5, 2.5 * k);
+      ctx.beginPath();
+      ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+    if (e.type === "bomber") {
+      clayBody(ctx, k, flash, "#E39A3A", 26, 48, 15, 54);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A4638";
+      ctx.beginPath();
+      ctx.arc(0, -22 * k, 12 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#C9A15A";
+      ctx.fillRect(-2 * k, -38 * k, 4 * k, 8 * k);
+      ctx.fillStyle = "#FFE27A";
+      ctx.beginPath();
+      ctx.arc(0, -40 * k, 3.2 * k, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    if (e.type === "splitter" || e.type === "splitling") {
+      const chubby = e.type === "splitling" ? 0.85 : 1;
+      clayBody(ctx, k * chubby, flash, "#9FCF96", 26, 46, 14, 54);
+      if (e.type === "splitter") {
+        ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FBF88";
+        ctx.beginPath();
+        ctx.arc(16 * k, -50 * k, 11 * k, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.beginPath();
+        ctx.ellipse(13 * k, -53 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return;
+    }
+    if (e.type === "jumper") {
+      clayBody(ctx, k, flash, "#7BA24A", 16, 44, 13, 58);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#6A9140";
+      roundRect(ctx, -11 * k, -22 * k, 8 * k, 22 * k, 4 * k);
+      ctx.fill();
+      roundRect(ctx, 3 * k, -22 * k, 8 * k, 22 * k, 4 * k);
+      ctx.fill();
+      return;
+    }
+    fallbackEnemy(ctx, k, false, flash);
   }
   function fallbackEnemy(ctx, k, sprint, flash) {
     ctx.fillStyle = flash > 0 ? "#FFFFFF" : sprint ? "#7BA24A" : "#9FD6B0";
@@ -1206,6 +1540,87 @@
     ctx.fill();
     ctx.beginPath();
     ctx.arc(0, sprint ? -52 * k : -56 * k, sprint ? 13 * k : 16 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  function drawLaneWarning(ctx, lane, camX, timeLeft) {
+    const x = lane === "left" ? -LANE_X : LANE_X;
+    const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
+    const farR = pr(x + 2.4, 0, SPAWN_Z - 4, camX);
+    const nearL = pr(x - 2.4, 0, 10, camX);
+    const nearR = pr(x + 2.4, 0, 10, camX);
+    const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
+    ctx.save();
+    ctx.fillStyle = `rgba(210, 48, 40, ${Math.max(0.12, Math.min(0.42, pulse))})`;
+    ctx.beginPath();
+    ctx.moveTo(farL.sx, farL.sy);
+    ctx.lineTo(farR.sx, farR.sy);
+    ctx.lineTo(nearR.sx, nearR.sy);
+    ctx.lineTo(nearL.sx, nearL.sy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  function drawProp(ctx, p, camX) {
+    const s = pr(p.x, 0, p.z, camX);
+    const k = s.scale;
+    ctx.save();
+    ctx.translate(s.sx, s.sy);
+    ctx.fillStyle = "rgba(40,50,30,0.22)";
+    drawEllipse(ctx, 0, 2 * k, 26 * k, 9 * k);
+    ctx.fill();
+    if (p.kind === "cage") {
+      ctx.fillStyle = "#C9A56A";
+      roundRect(ctx, -28 * k, -70 * k, 56 * k, 70 * k, 8 * k);
+      ctx.fill();
+      ctx.fillStyle = "#E8D3A0";
+      roundRect(ctx, -22 * k, -64 * k, 44 * k, 52 * k, 6 * k);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(90,55,25,0.7)";
+      ctx.lineWidth = Math.max(2, 3.5 * k);
+      for (let i = -12; i <= 12; i += 8) {
+        ctx.beginPath();
+        ctx.moveTo(i * k, -62 * k);
+        ctx.lineTo(i * k, -16 * k);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#E2B84A";
+      ctx.beginPath();
+      ctx.arc(0, -38 * k, 8 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#5A3E22";
+      ctx.font = `bold ${Math.max(10, 16 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("\u4EBA\u8D28", 0, -80 * k);
+      drawPropHp(ctx, p, 32 * k, k);
+    } else {
+      ctx.fillStyle = "#D9853A";
+      roundRect(ctx, -18 * k, -58 * k, 36 * k, 58 * k, 10 * k);
+      ctx.fill();
+      ctx.fillStyle = "#E8C45A";
+      ctx.fillRect(-18 * k, -40 * k, 36 * k, 10 * k);
+      ctx.fillStyle = "#F4E2B0";
+      ctx.beginPath();
+      ctx.ellipse(0, -58 * k, 16 * k, 6 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#5A3E22";
+      ctx.font = `bold ${Math.max(10, 15 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("\u6CB9\u6876", 0, -72 * k);
+      drawPropHp(ctx, p, 24 * k, k);
+    }
+    ctx.restore();
+  }
+  function drawPropHp(ctx, p, y, k) {
+    const w = 36 * k;
+    const h = 5 * k;
+    ctx.fillStyle = "rgba(40,30,20,0.35)";
+    roundRect(ctx, -w / 2, -y, w, h, 2 * k);
+    ctx.fill();
+    const t = Math.max(0, p.hp / Math.max(0.01, p.maxHp));
+    ctx.fillStyle = "#7BB24A";
+    roundRect(ctx, -w / 2, -y, w * t, h, 2 * k);
     ctx.fill();
   }
   function drawSoldier(ctx, sx, sy, scale, bob, flash, weapon) {
@@ -1288,17 +1703,18 @@
   }
   function drawBullet(ctx, b, camX) {
     const p = pr(b.x, b.y, b.z, camX);
-    const k = p.scale;
+    const boosted = b.amplified;
+    const k = p.scale * (boosted ? 1.35 : 1);
     ctx.save();
     ctx.translate(p.sx, p.sy);
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10 * k);
-    glow.addColorStop(0, "rgba(255,240,170,0.7)");
+    glow.addColorStop(0, boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
     glow.addColorStop(1, "rgba(255,220,80,0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(0, 0, 10 * k, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#F7E08A";
+    ctx.fillStyle = boosted ? "#FFD24A" : "#F7E08A";
     ctx.beginPath();
     ctx.ellipse(0, 0, 3.2 * k, 8 * k, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -1381,6 +1797,15 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("\u5DE6\u53F3\u6ED1\u52A8 \xB7 \u81EA\u52A8\u5F00\u706B \xB7 \u7A7F\u84DD\u95E8\u52A0\u4EBA", CANVAS_W / 2, CANVAS_H - 172);
+    }
+    if (hud.warning) {
+      const pulse = 0.72 + Math.sin(hud.warning.timeLeft * 18) * 0.18;
+      pill(ctx, 150, 150, CANVAS_W - 300, 84, `rgba(180,36,32,${pulse})`);
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = 'bold 44px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("\u8EB2\u5F00\uFF01", CANVAS_W / 2, 194);
     }
   }
   function pill(ctx, x, y, w, h, color) {
@@ -1727,13 +2152,22 @@
       this.enemies = new Enemies();
       this.bullets = new Bullets();
       this.gates = new Gates();
+      this.props = new Props();
       this.particles = new Particles();
       this.cursor = 0;
+      this.propCursor = 0;
       this.pendingPairs = /* @__PURE__ */ new Map();
       this.nextHordeAt = 0;
       this.nextGateAt = 0;
       this.endlessGateI = 0;
+      this.endlessMixI = 0;
+      this.nextPropAt = 0;
+      this.endlessPropI = 0;
       this.hordeSkipUntil = 0;
+      this.goldSpawned = false;
+      this.warningLane = null;
+      this.warningImpactAt = 0;
+      this.nextWarningAt = 0;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -1797,10 +2231,18 @@
         enemies: this.enemies.pool.active.map((e) => ({
           type: e.type,
           z: e.z,
-          hp: e.hp
+          hp: e.hp,
+          airborne: e.airborne
         })),
         bullets: this.bullets.pool.size,
-        remain: this.time
+        remain: this.time,
+        warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null,
+        props: this.props.pool.active.map((p) => ({
+          kind: p.kind,
+          lane: p.lane,
+          z: p.z,
+          hp: p.hp
+        }))
       };
     }
     beginRun() {
@@ -1811,16 +2253,25 @@
       this.hintTimer = 0;
       this.shake = 0;
       this.cursor = 0;
+      this.propCursor = 0;
       this.pendingPairs.clear();
       this.nextHordeAt = SCRIPT_ENEMY_END + 0.28;
       this.nextGateAt = ENDLESS_GATE_START;
       this.endlessGateI = 0;
+      this.endlessMixI = 0;
+      this.nextPropAt = ENDLESS_PROP_START;
+      this.endlessPropI = 0;
       this.hordeSkipUntil = 0;
+      this.goldSpawned = false;
+      this.warningLane = null;
+      this.warningImpactAt = 0;
+      this.nextWarningAt = WARNING_FIRST;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
       this.bullets.clear();
       this.gates.clear();
+      this.props.clear();
       this.particles.clear();
       this.squad.x = LANE_X;
       this.input.targetX = LANE_X;
@@ -1841,12 +2292,17 @@
       this.squad.update(dt, target);
       this.spawnDue();
       this.spawnEndless();
+      this.spawnGoldGate();
+      this.spawnPropsDue();
+      this.updateWarning();
       this.gates.update(dt);
+      this.props.update(dt);
       this.enemies.update(dt);
       this.shoot(dt);
       this.bullets.update(dt);
       this.collideBullets();
       this.collideGates();
+      this.collideProps();
       this.collideEnemies();
       this.particles.update(dt);
       if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
@@ -1866,9 +2322,12 @@
     spawnEndless() {
       while (this.time >= this.nextHordeAt) {
         const t = this.nextHordeAt;
-        if (t >= this.hordeSkipUntil) {
-          this.enemies.spawn("walker", "right");
-          this.enemies.spawn("sprinter", "right");
+        if (t >= this.hordeSkipUntil && !inRightLaneGap(t)) {
+          const a = ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length];
+          const b = ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length];
+          this.spawnEnemy(a, "right");
+          this.spawnEnemy(b, "right");
+          this.endlessMixI += 2;
         }
         this.nextHordeAt += endlessHordeInterval(t);
       }
@@ -1899,10 +2358,71 @@
         this.nextGateAt += ENDLESS_GATE_PERIOD;
       }
     }
+    spawnEnemy(type, lane, opts) {
+      return this.enemies.spawn(type, lane, {
+        ...opts,
+        hpMul: enemyHpMul(this.time)
+      });
+    }
+    spawnGoldGate() {
+      if (this.goldSpawned || this.time < GOLD_GATE_AT) return;
+      this.goldSpawned = true;
+      this.gates.spawn({
+        kind: "amp",
+        lane: "right",
+        label: "\xD72",
+        z: GOLD_GATE_Z,
+        stationary: true
+      });
+    }
+    spawnPropsDue() {
+      while (this.propCursor < PROP_EVENTS.length && PROP_EVENTS[this.propCursor].time <= this.time) {
+        const ev = PROP_EVENTS[this.propCursor++];
+        this.props.spawn(ev.kind, ev.lane);
+      }
+      while (this.time >= this.nextPropAt) {
+        const kind = this.endlessPropI % 2 === 0 ? "cage" : "barrel";
+        const lane = kind === "cage" ? "left" : "right";
+        this.props.spawn(kind, lane);
+        this.endlessPropI += 1;
+        this.nextPropAt += ENDLESS_PROP_PERIOD;
+      }
+    }
+    scheduleNextWarning(fromTime) {
+      let t = fromTime + warningPeriod(fromTime);
+      for (let i = 0; i < 4; i++) {
+        const impact = t + WARNING_TELEGRAPH;
+        if (inRightLaneGap(t) || inRightLaneGap(impact)) {
+          t += 2;
+          continue;
+        }
+        break;
+      }
+      this.nextWarningAt = t;
+    }
+    updateWarning() {
+      if (this.warningLane) {
+        if (this.time >= this.warningImpactAt) {
+          const lane = this.warningLane;
+          this.warningLane = null;
+          if (inLane(this.squad.x, lane) && this.squad.count > 0) {
+            this.squad.lose(WARNING_DAMAGE);
+            this.shake = 0.32;
+            this.audio.play("red");
+          }
+          this.scheduleNextWarning(this.time);
+        }
+        return;
+      }
+      if (this.time >= this.nextWarningAt && this.squad.count > 0) {
+        this.warningLane = laneOfX(this.squad.x);
+        this.warningImpactAt = this.time + WARNING_TELEGRAPH;
+      }
+    }
     applyEvent(ev) {
       var _a;
       if (ev.kind === "enemy" && ev.enemy) {
-        this.enemies.spawn(ev.enemy, ev.lane);
+        this.spawnEnemy(ev.enemy, ev.lane);
         return;
       }
       if (ev.kind === "gate" && ev.gate) {
@@ -1941,15 +2461,50 @@
       }
       if (any) this.audio.play("shoot");
     }
+    bulletCrosses(b, z, x, half = LANE_HALF) {
+      if (Math.abs(b.x - x) > half) return false;
+      if (b.pz <= z && b.z >= z) return true;
+      return Math.abs(b.z - z) <= 0.8;
+    }
     collideBullets() {
-      const bullets = this.bullets.pool.active;
-      const enemies = this.enemies.pool.active;
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
+      const bullets = this.bullets.pool.active.slice();
+      for (const b of bullets) {
+        if (!b.alive || !this.bullets.pool.active.includes(b)) continue;
+        for (const g of this.gates.ampGates()) {
+          if (this.bulletCrosses(b, g.z, g.x)) b.amplified = true;
+        }
+        let consumed = false;
+        const gateList = this.gates.pool.active.slice();
+        for (const g of gateList) {
+          if (!g.alive || g.kind === "amp" || g.stationary) continue;
+          if (!this.bulletCrosses(b, g.z, g.x)) continue;
+          chargeGate(g);
+          this.particles.sparks(g.x, 1.2, g.z);
+          this.bullets.pool.release(b);
+          consumed = true;
+          break;
+        }
+        if (consumed) continue;
+        const propList = this.props.pool.active.slice();
+        for (const p of propList) {
+          if (!p.alive) continue;
+          if (Math.abs(p.x - b.x) > p.radius + 0.55) continue;
+          if (!this.bulletCrosses(b, p.z, p.x, p.radius + 0.7)) continue;
+          const broke = this.props.hurt(p, b.damage);
+          this.particles.sparks(p.x, 0.7, p.z);
+          this.audio.play("hit");
+          this.bullets.pool.release(b);
+          consumed = true;
+          if (broke) this.onPropOpened(p);
+          break;
+        }
+        if (consumed) continue;
+        const enemies = this.enemies.pool.active;
         let hitIndex = -1;
         let bestZ = Infinity;
         for (let j = 0; j < enemies.length; j++) {
           const e = enemies[j];
+          if (e.airborne) continue;
           if (Math.abs(e.x - b.x) <= e.radius + 0.55 && Math.abs(e.z - b.z) <= 1.4) {
             if (e.z < bestZ) {
               bestZ = e.z;
@@ -1959,22 +2514,78 @@
         }
         if (hitIndex >= 0) {
           const e = enemies[hitIndex];
-          this.particles.sparks(e.x, 0.6, e.z);
+          this.particles.sparks(e.x, 0.6 + e.y, e.z);
           this.audio.play("hit");
-          const dead = this.enemies.hurt(e, b.damage);
+          const dead = this.enemies.hurt(e, this.damageVs(b, e));
           this.bullets.pool.release(b);
-          if (dead) {
-            const color = e.type === "sprinter" ? "#7BA24A" : "#A8D9B8";
-            this.particles.puff(e.x, 0.4, e.z, color);
-            this.kills += 1;
+          if (dead) this.onEnemyKilled(e);
+        }
+      }
+    }
+    /** 已穿过金门的子弹 ×2；已走过金门、处在门与小队之间的敌人承伤 ×0.5 */
+    damageVs(b, e) {
+      let dmg = b.damage;
+      if (b.amplified) dmg *= GOLD_AMP_MUL;
+      for (const g of this.gates.ampGates()) {
+        if (Math.abs(e.x - g.x) <= LANE_HALF + 1.2 && e.z < g.z) {
+          dmg *= GOLD_NEAR_MUL;
+          break;
+        }
+      }
+      return dmg;
+    }
+    onEnemyKilled(e) {
+      if (e.type === "splitter" && !e.isChild) {
+        this.spawnSplitlings(e);
+      }
+      const color = enemyPuffColor(e.type);
+      this.particles.puff(e.x, 0.4, e.z, color);
+      this.kills += 1;
+    }
+    spawnSplitlings(e) {
+      const lane = e.x < 0 ? "left" : "right";
+      const offsets = [-0.75, 0.75];
+      for (const off of offsets) {
+        this.spawnEnemy("splitling", lane, {
+          x: e.x + off,
+          z: e.z + 0.15,
+          isChild: true
+        });
+      }
+    }
+    onPropOpened(p) {
+      if (p.kind === "cage") {
+        this.squad.add(CAGE_REWARD);
+        this.particles.puff(p.x, 0.6, p.z, "#E8D48A");
+        this.audio.play("gate");
+        this.props.pool.release(p);
+        return;
+      }
+      this.explodeBarrel(p, false);
+    }
+    explodeBarrel(p, onSquad) {
+      this.particles.burst(p.x, 0.6, p.z, "#E39A3A");
+      this.audio.play("red");
+      this.shake = Math.max(this.shake, 0.24);
+      if (!onSquad) {
+        const list = this.enemies.pool.active.slice();
+        for (const e of list) {
+          if (!e.alive) continue;
+          const dx = e.x - p.x;
+          const dz = e.z - p.z;
+          if (dx * dx + dz * dz <= BARREL_AOE_RADIUS * BARREL_AOE_RADIUS) {
+            const dead = this.enemies.hurt(e, BARREL_AOE_DAMAGE);
+            if (dead) this.onEnemyKilled(e);
           }
         }
       }
+      this.props.pool.release(p);
     }
     collideGates() {
       const list = this.gates.pool.active.slice();
       for (const g of list) {
         if (!g || !this.gates.pool.active.includes(g)) continue;
+        if (g.kind === "amp" || g.stationary) continue;
         if (g.z > TEAM_Z + 0.6) continue;
         if (this.gates.overlaps(g, this.squad.x) && !g.consumed) {
           g.consumed = true;
@@ -2003,11 +2614,34 @@
         this.audio.play("weapon");
       }
     }
+    collideProps() {
+      const list = this.props.pool.active.slice();
+      for (const p of list) {
+        if (!p || !this.props.pool.active.includes(p)) continue;
+        if (p.z > TEAM_Z + 0.8) continue;
+        const near = Math.abs(p.x - this.squad.x) <= LANE_HALF + 0.35;
+        if (p.z <= TEAM_Z + 0.8 && p.z >= TEAM_Z - 1.4 && near) {
+          if (p.kind === "barrel") {
+            this.explodeBarrel(p, true);
+            if (this.squad.iframes <= 0) {
+              this.squad.lose(BARREL_CONTACT_LOSS);
+              this.shake = 0.28;
+            }
+          } else {
+            this.particles.puff(p.x, 0.4, p.z, "#C9C0B0");
+            this.props.pool.release(p);
+          }
+          if (this.squad.count <= 0) return;
+        } else if (p.z <= TEAM_Z - 0.8) {
+          this.props.pool.release(p);
+        }
+      }
+    }
     collideEnemies() {
       if (this.squad.count <= 0) return;
-      const list = this.enemies.pool.active;
-      for (let i = list.length - 1; i >= 0; i--) {
-        const e = list[i];
+      const list = this.enemies.pool.active.slice();
+      for (const e of list) {
+        if (!e || !this.enemies.pool.active.includes(e)) continue;
         if (e.z > TEAM_Z + 1.1) continue;
         const dx = Math.abs(e.x - this.squad.x);
         if (dx > LANE_X * 0.85) {
@@ -2016,14 +2650,16 @@
           continue;
         }
         if (e.z <= TEAM_Z + 1.1 && e.z >= TEAM_Z - 1.4) {
+          const loss = ENEMY[e.type].contactLoss;
+          const color = enemyPuffColor(e.type);
           if (this.squad.iframes > 0) {
-            this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
+            this.particles.puff(e.x, 0.4, e.z, color);
             this.enemies.pool.release(e);
             continue;
           }
-          this.squad.lose(1);
+          this.squad.lose(loss);
           this.shake = 0.28;
-          this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
+          this.particles.puff(e.x, 0.4, e.z, color);
           this.audio.play("red");
           this.enemies.pool.release(e);
           if (this.squad.count <= 0) return;
@@ -2074,8 +2710,17 @@
       const sv = this.shake > 0 ? (Math.random() * 2 - 1) * 8 * this.shake : 0;
       drawWorld(ctx, camX, this.animTime, sh, sv);
       const items = [];
+      if (this.warningLane && this.state === "playing") {
+        items.push({
+          z: 28,
+          draw: () => drawLaneWarning(ctx, this.warningLane, camX, this.warningImpactAt - this.time)
+        });
+      }
       for (const g of this.gates.pool.active) {
         items.push({ z: g.z, draw: () => drawGate(ctx, g, camX) });
+      }
+      for (const p of this.props.pool.active) {
+        items.push({ z: p.z, draw: () => drawProp(ctx, p, camX) });
       }
       for (const e of this.enemies.pool.active) {
         items.push({ z: e.z, draw: () => drawEnemy(ctx, e, camX) });
@@ -2100,7 +2745,8 @@
           remain: this.time,
           fireBonus: this.squad.fireBonus,
           muted: this.audio.muted,
-          hint: this.hint
+          hint: this.hint,
+          warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null
         });
       } else if (this.state === "title") {
         drawTitle(ctx, this.best, this.audio.muted);
@@ -2111,6 +2757,13 @@
       }
     }
   };
+  function enemyPuffColor(type) {
+    if (type === "sprinter" || type === "jumper") return "#7BA24A";
+    if (type === "bomber") return "#E39A3A";
+    if (type === "shield") return "#C4A574";
+    if (type === "splitter" || type === "splitling") return "#8FBF88";
+    return "#A8D9B8";
+  }
 
   // src/main.ts
   function attachHooks(game) {

@@ -79,7 +79,27 @@ export class Particles {
     }
   }
 
+  burst(x: number, y: number, z: number, color: string): void {
+    for (let i = 0; i < 16; i++) {
+      const p = this.pool.acquire();
+      if (!p) return;
+      p.alive = true;
+      p.kind = i % 3 === 0 ? "spark" : "puff";
+      p.x = x + ((i % 5) - 2) * 0.16;
+      p.y = y + 0.5;
+      p.z = z;
+      const a = (i / 16) * Math.PI * 2;
+      p.vx = Math.cos(a) * (2.8 + (i % 4) * 0.7);
+      p.vy = 2.2 + (i % 3) * 0.9;
+      p.vz = Math.sin(a) * 2.2;
+      p.maxLife = p.life = 0.32;
+      p.size = i % 2 === 0 ? 12 : 8;
+      p.color = i % 2 === 0 ? "#FFE27A" : color;
+    }
+  }
+
   update(dt: number): void {
+
     const list = this.pool.active;
     for (let i = list.length - 1; i >= 0; i--) {
       const p = list[i];

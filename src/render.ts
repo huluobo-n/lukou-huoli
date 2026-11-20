@@ -197,7 +197,7 @@ function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number)
 export function drawGate(ctx: CanvasRenderingContext2D, g: Gate, camX: number): void {
   const p = pr(g.x, 0, g.z, camX);
   const k = p.scale;
-  const id: SpriteId = g.kind === "red" ? "gate_coral" : g.kind === "weapon" ? "gate_gold" : "gate_blue";
+  const id: SpriteId = g.kind === "red" ? "gate_coral" : (g.kind === "weapon" || g.kind === "amp") ? "gate_gold" : "gate_blue";
   const h = 210 * k;
   const img = getSprite(id);
   if (img) {
@@ -211,7 +211,7 @@ export function drawGate(ctx: CanvasRenderingContext2D, g: Gate, camX: number): 
       const icon = getSprite("icon_smg") ? "icon_smg" : "icon_pistol";
       drawSprite(ctx, icon, hx, hy + iconH * 0.45, iconH);
     } else {
-      drawGateLabel(ctx, g.label, hx, hy, k, g.kind === "red");
+      drawGateLabel(ctx, g.label, hx, hy, k, g.kind === "red", g.kind === "amp");
     }
     return;
   }
@@ -226,6 +226,7 @@ function drawGateLabel(
   y: number,
   k: number,
   danger: boolean,
+  gold = false,
 ): void {
   const fontSize = Math.max(16, (label.length > 2 ? 44 : 54) * k);
   ctx.save();
@@ -235,9 +236,9 @@ function drawGateLabel(
   ctx.lineJoin = "round";
   ctx.miterLimit = 2;
   ctx.lineWidth = Math.max(3, fontSize * 0.14);
-  ctx.strokeStyle = danger ? "rgba(110,30,30,0.45)" : "rgba(25,50,110,0.4)";
+  ctx.strokeStyle = danger ? "rgba(110,30,30,0.45)" : gold ? "rgba(120,70,10,0.5)" : "rgba(25,50,110,0.4)";
   ctx.strokeText(label, x, y);
-  ctx.fillStyle = "#FFFFFF";
+  ctx.fillStyle = gold ? "#FFF4B8" : "#FFFFFF";
   ctx.fillText(label, x, y);
   ctx.restore();
 }
@@ -255,7 +256,7 @@ function fallbackGate(
   const y = sy - h;
   let frame = "#3B82F6";
   if (g.kind === "red") frame = "#E5736A";
-  else if (g.kind === "weapon") frame = "#F0C033";
+  else if (g.kind === "weapon" || g.kind === "amp") frame = "#F0C033";
   ctx.strokeStyle = frame;
   ctx.lineWidth = Math.max(6, 16 * k);
   ctx.lineCap = "round";
@@ -265,12 +266,13 @@ function fallbackGate(
   ctx.lineTo(x + w - 10 * k, sy - 8 * k);
   ctx.stroke();
   if (g.kind === "weapon") return;
-  drawGateLabel(ctx, g.label, sx, y + h * 0.5, k, g.kind === "red");
+  drawGateLabel(ctx, g.label, sx, y + h * 0.5, k, g.kind === "red", g.kind === "amp");
 }
 
 export function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, camX: number): void {
-  const p = pr(e.x, 0, e.z, camX);
+  const p = pr(e.x, e.y, e.z, camX);
   const def = ENEMY[e.type];
+  const stretch = e.type === "jumper" && e.airborne ? 1 + Math.min(0.45, e.y * 0.18) : 1;
   const k = p.scale * def.scale;
   const lean = e.type === "sprinter" && e.dashing > 0 ? 10 * k : e.type === "sprinter" ? 4 * k : 0;
 
@@ -286,14 +288,98 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy, camX: number)
     if (!drawSprite(ctx, "sprinter_0", 0, 0, h, { flash })) {
       fallbackEnemy(ctx, k, true, flash);
     }
-  } else {
+  } else if (e.type === "walker") {
     const frame: SpriteId = Math.sin(e.walk) >= 0 ? "walker_0" : "walker_1";
     const h = 122 * k;
     if (!drawSprite(ctx, frame, 0, 0, h, { flash })) {
       fallbackEnemy(ctx, k, false, flash);
     }
+  } else {
+    drawSpecialEnemy(ctx, e, k * stretch, flash);
   }
   ctx.restore();
+}
+
+function clayBody(
+  ctx: CanvasRenderingContext2D,
+  k: number,
+  flash: number,
+  color: string,
+  bodyW: number,
+  bodyH: number,
+  headR: number,
+  headY: number,
+): void {
+  ctx.fillStyle = flash > 0 ? "#FFFFFF" : color;
+  drawEllipse(ctx, 0, -bodyH * 0.45 * k, bodyW * k, bodyH * 0.55 * k);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, -headY * k, headR * k, 0, Math.PI * 2);
+  ctx.fill();
+  if (flash <= 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(-headR * 0.28 * k, -headY * k - headR * 0.22 * k, headR * 0.28 * k, headR * 0.18 * k, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawSpecialEnemy(ctx: CanvasRenderingContext2D, e: Enemy, k: number, flash: number): void {
+  if (e.type === "shield") {
+    clayBody(ctx, k, flash, "#8FB88A", 24, 50, 16, 58);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#D7B07A";
+    roundRect(ctx, -22 * k, -54 * k, 28 * k, 42 * k, 10 * k);
+    ctx.fill();
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#E8C992";
+    ctx.beginPath();
+    ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(110,70,30,0.35)";
+    ctx.lineWidth = Math.max(1.5, 2.5 * k);
+    ctx.beginPath();
+    ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+    ctx.stroke();
+    return;
+  }
+  if (e.type === "bomber") {
+    clayBody(ctx, k, flash, "#E39A3A", 26, 48, 15, 54);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A4638";
+    ctx.beginPath();
+    ctx.arc(0, -22 * k, 12 * k, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#C9A15A";
+    ctx.fillRect(-2 * k, -38 * k, 4 * k, 8 * k);
+    ctx.fillStyle = "#FFE27A";
+    ctx.beginPath();
+    ctx.arc(0, -40 * k, 3.2 * k, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  if (e.type === "splitter" || e.type === "splitling") {
+    const chubby = e.type === "splitling" ? 0.85 : 1;
+    clayBody(ctx, k * chubby, flash, "#9FCF96", 26, 46, 14, 54);
+    if (e.type === "splitter") {
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FBF88";
+      ctx.beginPath();
+      ctx.arc(16 * k, -50 * k, 11 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.beginPath();
+      ctx.ellipse(13 * k, -53 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+  if (e.type === "jumper") {
+    clayBody(ctx, k, flash, "#7BA24A", 16, 44, 13, 58);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#6A9140";
+    roundRect(ctx, -11 * k, -22 * k, 8 * k, 22 * k, 4 * k);
+    ctx.fill();
+    roundRect(ctx, 3 * k, -22 * k, 8 * k, 22 * k, 4 * k);
+    ctx.fill();
+    return;
+  }
+  fallbackEnemy(ctx, k, false, flash);
 }
 
 function fallbackEnemy(ctx: CanvasRenderingContext2D, k: number, sprint: boolean, flash: number): void {
@@ -302,6 +388,100 @@ function fallbackEnemy(ctx: CanvasRenderingContext2D, k: number, sprint: boolean
   ctx.fill();
   ctx.beginPath();
   ctx.arc(0, sprint ? -52 * k : -56 * k, sprint ? 13 * k : 16 * k, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+export function drawLaneWarning(
+  ctx: CanvasRenderingContext2D,
+  lane: "left" | "right",
+  camX: number,
+  timeLeft: number,
+): void {
+  const x = lane === "left" ? -LANE_X : LANE_X;
+  const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
+  const farR = pr(x + 2.4, 0, SPAWN_Z - 4, camX);
+  const nearL = pr(x - 2.4, 0, 10, camX);
+  const nearR = pr(x + 2.4, 0, 10, camX);
+  const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
+  ctx.save();
+  ctx.fillStyle = `rgba(210, 48, 40, ${Math.max(0.12, Math.min(0.42, pulse))})`;
+  ctx.beginPath();
+  ctx.moveTo(farL.sx, farL.sy);
+  ctx.lineTo(farR.sx, farR.sy);
+  ctx.lineTo(nearR.sx, nearR.sy);
+  ctx.lineTo(nearL.sx, nearL.sy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+export function drawProp(ctx: CanvasRenderingContext2D, p: { kind: string; x: number; z: number; hp: number; maxHp: number }, camX: number): void {
+  const s = pr(p.x, 0, p.z, camX);
+  const k = s.scale;
+  ctx.save();
+  ctx.translate(s.sx, s.sy);
+  ctx.fillStyle = "rgba(40,50,30,0.22)";
+  drawEllipse(ctx, 0, 2 * k, 26 * k, 9 * k);
+  ctx.fill();
+  if (p.kind === "cage") {
+    ctx.fillStyle = "#C9A56A";
+    roundRect(ctx, -28 * k, -70 * k, 56 * k, 70 * k, 8 * k);
+    ctx.fill();
+    ctx.fillStyle = "#E8D3A0";
+    roundRect(ctx, -22 * k, -64 * k, 44 * k, 52 * k, 6 * k);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(90,55,25,0.7)";
+    ctx.lineWidth = Math.max(2, 3.5 * k);
+    for (let i = -12; i <= 12; i += 8) {
+      ctx.beginPath();
+      ctx.moveTo(i * k, -62 * k);
+      ctx.lineTo(i * k, -16 * k);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#E2B84A";
+    ctx.beginPath();
+    ctx.arc(0, -38 * k, 8 * k, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#5A3E22";
+    ctx.font = `bold ${Math.max(10, 16 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("人质", 0, -80 * k);
+    drawPropHp(ctx, p, 32 * k, k);
+  } else {
+    ctx.fillStyle = "#D9853A";
+    roundRect(ctx, -18 * k, -58 * k, 36 * k, 58 * k, 10 * k);
+    ctx.fill();
+    ctx.fillStyle = "#E8C45A";
+    ctx.fillRect(-18 * k, -40 * k, 36 * k, 10 * k);
+    ctx.fillStyle = "#F4E2B0";
+    ctx.beginPath();
+    ctx.ellipse(0, -58 * k, 16 * k, 6 * k, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#5A3E22";
+    ctx.font = `bold ${Math.max(10, 15 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("油桶", 0, -72 * k);
+    drawPropHp(ctx, p, 24 * k, k);
+  }
+  ctx.restore();
+}
+
+function drawPropHp(
+  ctx: CanvasRenderingContext2D,
+  p: { hp: number; maxHp: number },
+  y: number,
+  k: number,
+): void {
+  const w = 36 * k;
+  const h = 5 * k;
+  ctx.fillStyle = "rgba(40,30,20,0.35)";
+  roundRect(ctx, -w / 2, -y, w, h, 2 * k);
+  ctx.fill();
+  const t = Math.max(0, p.hp / Math.max(0.01, p.maxHp));
+  ctx.fillStyle = "#7BB24A";
+  roundRect(ctx, -w / 2, -y, w * t, h, 2 * k);
   ctx.fill();
 }
 
@@ -411,17 +591,18 @@ export function drawSquad(ctx: CanvasRenderingContext2D, squad: Squad, camX: num
 
 export function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet, camX: number): void {
   const p = pr(b.x, b.y, b.z, camX);
-  const k = p.scale;
+  const boosted = b.amplified;
+  const k = p.scale * (boosted ? 1.35 : 1);
   ctx.save();
   ctx.translate(p.sx, p.sy);
   const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10 * k);
-  glow.addColorStop(0, "rgba(255,240,170,0.7)");
+  glow.addColorStop(0, boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
   glow.addColorStop(1, "rgba(255,220,80,0)");
   ctx.fillStyle = glow;
   ctx.beginPath();
   ctx.arc(0, 0, 10 * k, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#F7E08A";
+  ctx.fillStyle = boosted ? "#FFD24A" : "#F7E08A";
   ctx.beginPath();
   ctx.ellipse(0, 0, 3.2 * k, 8 * k, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -459,6 +640,7 @@ export interface HudInfo {
   fireBonus: number;
   muted: boolean;
   hint: boolean;
+  warning?: { lane: "left" | "right"; timeLeft: number } | null;
 }
 
 export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
@@ -525,6 +707,16 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("左右滑动 · 自动开火 · 穿蓝门加人", CANVAS_W / 2, CANVAS_H - 172);
+  }
+
+  if (hud.warning) {
+    const pulse = 0.72 + Math.sin(hud.warning.timeLeft * 18) * 0.18;
+    pill(ctx, 150, 150, CANVAS_W - 300, 84, `rgba(180,36,32,${pulse})`);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = 'bold 44px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("躲开！", CANVAS_W / 2, 194);
   }
 }
 

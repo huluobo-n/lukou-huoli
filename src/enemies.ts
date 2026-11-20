@@ -1,4 +1,12 @@
-import { BASE_SPEED, DESPAWN_Z, ENEMY, LANE_X, MAX_ENEMIES, SPAWN_Z, TEAM_Z, type EnemyId } from "./config";
+import {
+  BASE_SPEED,
+  DESPAWN_Z,
+  ENEMY,
+  LANE_X,
+  MAX_ENEMIES,
+  SPAWN_Z,
+  type EnemyId,
+} from "./config";
 import { Pool } from "./pool";
 
 export interface Enemy {
@@ -15,11 +23,18 @@ export interface Enemy {
   dashing: number;
   walk: number;
   hitFlash: number;
+  airborne: boolean;
+  jumpT: number;
+  airT: number;
+  isChild: boolean;
 }
 
 function resetE(e: Enemy): void {
   e.alive = false;
   e.hp = 0;
+  e.airborne = false;
+  e.isChild = false;
+  e.y = 0;
 }
 
 export class Enemies {
@@ -37,31 +52,44 @@ export class Enemies {
     dashing: 0,
     walk: 0,
     hitFlash: 0,
+    airborne: false,
+    jumpT: 0,
+    airT: 0,
+    isChild: false,
   }), resetE);
 
   clear(): void {
     this.pool.clear();
   }
 
-  spawn(type: EnemyId, lane: "left" | "right"): Enemy | null {
+  spawn(
+    type: EnemyId,
+    lane: "left" | "right",
+    opts?: { x?: number; z?: number; hpMul?: number; isChild?: boolean },
+  ): Enemy | null {
     const e = this.pool.acquire();
     if (!e) return null;
     const def = ENEMY[type];
+    const mul = Math.max(0.01, opts?.hpMul ?? 1);
     e.alive = true;
     e.type = type;
     // 同一车道错开一点横向位置，连出时看起来是一群而不是单列重叠
     const slot = this.pool.size % 3;
-    e.x = (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
+    e.x = opts?.x ?? (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
     e.y = 0;
-    e.z = SPAWN_Z;
-    e.hp = def.hp;
-    e.maxHp = def.hp;
+    e.z = opts?.z ?? SPAWN_Z;
+    e.hp = def.hp * mul;
+    e.maxHp = def.hp * mul;
     e.radius = def.radius;
     e.age = 0;
     e.dashT = type === "sprinter" ? 0.8 : 0;
     e.dashing = 0;
     e.walk = 0;
     e.hitFlash = 0;
+    e.airborne = false;
+    e.airT = 0;
+    e.jumpT = type === "jumper" ? 0.35 + (slot * 0.4) : 0;
+    e.isChild = !!opts?.isChild;
     return e;
   }
 
@@ -86,13 +114,41 @@ export class Enemies {
           }
         }
       }
+      if (e.type === "jumper") {
+        this.updateJumper(e, dt);
+      }
       e.z -= BASE_SPEED * def.speed * mul * dt;
       if (e.z < DESPAWN_Z || !e.alive) this.pool.releaseAt(i);
     }
   }
 
+  private updateJumper(e: Enemy, dt: number): void {
+    const every = ENEMY.jumper.jumpEvery;
+    const dur = ENEMY.jumper.jumpDuration;
+    const height = ENEMY.jumper.jumpHeight;
+    if (e.airborne) {
+      e.airT -= dt;
+      const t = 1 - Math.max(0, e.airT) / dur;
+      e.y = 4 * height * t * (1 - t);
+      if (e.airT <= 0) {
+        e.airborne = false;
+        e.y = 0;
+        e.jumpT = every;
+      }
+    } else {
+      e.y = 0;
+      e.jumpT -= dt;
+      if (e.jumpT <= 0) {
+        e.airborne = true;
+        e.airT = dur;
+      }
+    }
+  }
+
+  /** 造成伤害。盾兵承伤减半。生命降至 0 返回 true。 */
   hurt(e: Enemy, dmg: number): boolean {
-    e.hp -= dmg;
+    const takenMul = "damageTakenMul" in ENEMY[e.type] ? (ENEMY[e.type] as { damageTakenMul?: number }).damageTakenMul ?? 1 : 1;
+    e.hp -= dmg * takenMul;
     e.hitFlash = 0.08;
     if (e.hp <= 0) {
       e.alive = false;

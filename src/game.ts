@@ -1,29 +1,56 @@
 import {
+  BARREL_AOE_DAMAGE,
+  BARREL_AOE_RADIUS,
+  BARREL_CONTACT_LOSS,
+  CAGE_REWARD,
   ENDLESS_GATE_CYCLE,
   ENDLESS_GATE_PERIOD,
   ENDLESS_GATE_START,
+  ENDLESS_MIX,
+  ENDLESS_PROP_PERIOD,
+  ENDLESS_PROP_START,
+  ENEMY,
+  GOLD_AMP_MUL,
+  GOLD_GATE_AT,
+  GOLD_GATE_Z,
+  GOLD_NEAR_MUL,
+  LANE_HALF,
   LANE_X,
+  PROP_EVENTS,
   SCRIPT_ENEMY_END,
   TEAM_Z,
   TIMELINE,
+  WARNING_DAMAGE,
+  WARNING_FIRST,
+  WARNING_TELEGRAPH,
+  enemyHpMul,
   endlessHordeInterval,
+  inLane,
+  inRightLaneGap,
+  laneCenterX,
+  laneOfX,
+  warningPeriod,
+  type EnemyId,
   type TimelineEvent,
 } from "./config";
 import { ads } from "./ads";
 import { AudioSys } from "./audio";
 import { Bullets } from "./bullets";
-import { Enemies } from "./enemies";
-import { Gates } from "./gates";
+import { Enemies, type Enemy } from "./enemies";
+import { Gates, chargeGate, type Gate } from "./gates";
 import { Input } from "./input";
 import { Particles } from "./particles";
+import { Props, type WorldProp } from "./props";
 import { beginFrame, type Platform } from "./platform";
 import {
   drawBullet,
   drawEnemy,
   drawGate,
   drawHud,
+  drawLaneWarning,
   drawLegal,
   drawParticle,
+  drawProp,
   drawResult,
   drawSquad,
   drawTitle,
@@ -50,9 +77,11 @@ export interface PublicState {
   iframes: number;
   hint: boolean;
   gates: { lane: string; kind: string; label: string; z: number; timeAppeared: number }[];
-  enemies: { type: string; z: number; hp: number }[];
+  enemies: { type: string; z: number; hp: number; airborne?: boolean }[];
   bullets: number;
   remain: number;
+  warning: { lane: "left" | "right"; timeLeft: number } | null;
+  props: { kind: string; lane: string; z: number; hp: number }[];
 }
 
 export class Game {
@@ -69,15 +98,24 @@ export class Game {
   readonly enemies = new Enemies();
   readonly bullets = new Bullets();
   readonly gates = new Gates();
+  readonly props = new Props();
   readonly particles = new Particles();
   readonly input: Input;
   readonly audio: AudioSys;
   private cursor = 0;
+  private propCursor = 0;
   private pendingPairs = new Map<number, number>();
   private nextHordeAt = 0;
   private nextGateAt = 0;
   private endlessGateI = 0;
+  private endlessMixI = 0;
+  private nextPropAt = 0;
+  private endlessPropI = 0;
   private hordeSkipUntil = 0;
+  private goldSpawned = false;
+  warningLane: "left" | "right" | null = null;
+  warningImpactAt = 0;
+  private nextWarningAt = 0;
   paused = false;
   private running = false;
   private lastTs = 0;
@@ -147,9 +185,19 @@ export class Game {
         type: e.type,
         z: e.z,
         hp: e.hp,
+        airborne: e.airborne,
       })),
       bullets: this.bullets.pool.size,
       remain: this.time,
+      warning: this.warningLane
+        ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) }
+        : null,
+      props: this.props.pool.active.map((p) => ({
+        kind: p.kind,
+        lane: p.lane,
+        z: p.z,
+        hp: p.hp,
+      })),
     };
   }
 
@@ -161,16 +209,25 @@ export class Game {
     this.hintTimer = 0;
     this.shake = 0;
     this.cursor = 0;
+    this.propCursor = 0;
     this.pendingPairs.clear();
     this.nextHordeAt = SCRIPT_ENEMY_END + 0.28;
     this.nextGateAt = ENDLESS_GATE_START;
     this.endlessGateI = 0;
+    this.endlessMixI = 0;
+    this.nextPropAt = ENDLESS_PROP_START;
+    this.endlessPropI = 0;
     this.hordeSkipUntil = 0;
+    this.goldSpawned = false;
+    this.warningLane = null;
+    this.warningImpactAt = 0;
+    this.nextWarningAt = WARNING_FIRST;
     this.spawned.length = 0;
     this.squad.reset();
     this.enemies.clear();
     this.bullets.clear();
     this.gates.clear();
+    this.props.clear();
     this.particles.clear();
     this.squad.x = LANE_X;
     this.input.targetX = LANE_X;
@@ -195,12 +252,17 @@ export class Game {
     this.squad.update(dt, target);
     this.spawnDue();
     this.spawnEndless();
+    this.spawnGoldGate();
+    this.spawnPropsDue();
+    this.updateWarning();
     this.gates.update(dt);
+    this.props.update(dt);
     this.enemies.update(dt);
     this.shoot(dt);
     this.bullets.update(dt);
     this.collideBullets();
     this.collideGates();
+    this.collideProps();
     this.collideEnemies();
     this.particles.update(dt);
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
@@ -223,9 +285,12 @@ export class Game {
   private spawnEndless(): void {
     while (this.time >= this.nextHordeAt) {
       const t = this.nextHordeAt;
-      if (t >= this.hordeSkipUntil) {
-        this.enemies.spawn("walker", "right");
-        this.enemies.spawn("sprinter", "right");
+      if (t >= this.hordeSkipUntil && !inRightLaneGap(t)) {
+        const a = ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length];
+        const b = ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length];
+        this.spawnEnemy(a, "right");
+        this.spawnEnemy(b, "right");
+        this.endlessMixI += 2;
       }
       this.nextHordeAt += endlessHordeInterval(t);
     }
@@ -257,9 +322,76 @@ export class Game {
     }
   }
 
+  private spawnEnemy(type: EnemyId, lane: "left" | "right", opts?: { x?: number; z?: number; isChild?: boolean }): Enemy | null {
+    return this.enemies.spawn(type, lane, {
+      ...opts,
+      hpMul: enemyHpMul(this.time),
+    });
+  }
+
+  private spawnGoldGate(): void {
+    if (this.goldSpawned || this.time < GOLD_GATE_AT) return;
+    this.goldSpawned = true;
+    this.gates.spawn({
+      kind: "amp",
+      lane: "right",
+      label: "×2",
+      z: GOLD_GATE_Z,
+      stationary: true,
+    });
+  }
+
+  private spawnPropsDue(): void {
+    while (this.propCursor < PROP_EVENTS.length && PROP_EVENTS[this.propCursor].time <= this.time) {
+      const ev = PROP_EVENTS[this.propCursor++];
+      this.props.spawn(ev.kind, ev.lane);
+    }
+    while (this.time >= this.nextPropAt) {
+      const kind = this.endlessPropI % 2 === 0 ? "cage" : "barrel";
+      const lane = kind === "cage" ? "left" : "right";
+      this.props.spawn(kind, lane);
+      this.endlessPropI += 1;
+      this.nextPropAt += ENDLESS_PROP_PERIOD;
+    }
+  }
+
+  private scheduleNextWarning(fromTime: number): void {
+    let t = fromTime + warningPeriod(fromTime);
+    // 避开成对红门让道窗口，避免和门叠在一起像卡住
+    for (let i = 0; i < 4; i++) {
+      const impact = t + WARNING_TELEGRAPH;
+      if (inRightLaneGap(t) || inRightLaneGap(impact)) {
+        t += 2;
+        continue;
+      }
+      break;
+    }
+    this.nextWarningAt = t;
+  }
+
+  private updateWarning(): void {
+    if (this.warningLane) {
+      if (this.time >= this.warningImpactAt) {
+        const lane = this.warningLane;
+        this.warningLane = null;
+        if (inLane(this.squad.x, lane) && this.squad.count > 0) {
+          this.squad.lose(WARNING_DAMAGE);
+          this.shake = 0.32;
+          this.audio.play("red");
+        }
+        this.scheduleNextWarning(this.time);
+      }
+      return;
+    }
+    if (this.time >= this.nextWarningAt && this.squad.count > 0) {
+      this.warningLane = laneOfX(this.squad.x);
+      this.warningImpactAt = this.time + WARNING_TELEGRAPH;
+    }
+  }
+
   private applyEvent(ev: TimelineEvent): void {
     if (ev.kind === "enemy" && ev.enemy) {
-      this.enemies.spawn(ev.enemy, ev.lane);
+      this.spawnEnemy(ev.enemy, ev.lane);
       return;
     }
     if (ev.kind === "gate" && ev.gate) {
@@ -300,15 +432,58 @@ export class Game {
     if (any) this.audio.play("shoot");
   }
 
+  private bulletCrosses(b: { x: number; z: number; pz: number }, z: number, x: number, half = LANE_HALF): boolean {
+    if (Math.abs(b.x - x) > half) return false;
+    if (b.pz <= z && b.z >= z) return true;
+    return Math.abs(b.z - z) <= 0.8;
+  }
+
   private collideBullets(): void {
-    const bullets = this.bullets.pool.active;
-    const enemies = this.enemies.pool.active;
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
+    const bullets = this.bullets.pool.active.slice();
+    for (const b of bullets) {
+      if (!b.alive || !this.bullets.pool.active.includes(b)) continue;
+
+      // 金色增幅门：子弹穿过后翻倍，不消耗
+      for (const g of this.gates.ampGates()) {
+        if (this.bulletCrosses(b, g.z, g.x)) b.amplified = true;
+      }
+
+      // 充能 / 武器 / 倍增门：子弹打中即消耗，不再继续打感染体
+      let consumed = false;
+      const gateList = this.gates.pool.active.slice();
+      for (const g of gateList) {
+        if (!g.alive || g.kind === "amp" || g.stationary) continue;
+        if (!this.bulletCrosses(b, g.z, g.x)) continue;
+        chargeGate(g);
+        this.particles.sparks(g.x, 1.2, g.z);
+        this.bullets.pool.release(b);
+        consumed = true;
+        break;
+      }
+      if (consumed) continue;
+
+      // 人质笼 / 油桶
+      const propList = this.props.pool.active.slice();
+      for (const p of propList) {
+        if (!p.alive) continue;
+        if (Math.abs(p.x - b.x) > p.radius + 0.55) continue;
+        if (!this.bulletCrosses(b, p.z, p.x, p.radius + 0.7)) continue;
+        const broke = this.props.hurt(p, b.damage);
+        this.particles.sparks(p.x, 0.7, p.z);
+        this.audio.play("hit");
+        this.bullets.pool.release(b);
+        consumed = true;
+        if (broke) this.onPropOpened(p);
+        break;
+      }
+      if (consumed) continue;
+
+      const enemies = this.enemies.pool.active;
       let hitIndex = -1;
       let bestZ = Infinity;
       for (let j = 0; j < enemies.length; j++) {
         const e = enemies[j];
+        if (e.airborne) continue;
         if (Math.abs(e.x - b.x) <= e.radius + 0.55 && Math.abs(e.z - b.z) <= 1.4) {
           if (e.z < bestZ) {
             bestZ = e.z;
@@ -318,17 +493,77 @@ export class Game {
       }
       if (hitIndex >= 0) {
         const e = enemies[hitIndex];
-        this.particles.sparks(e.x, 0.6, e.z);
+        this.particles.sparks(e.x, 0.6 + e.y, e.z);
         this.audio.play("hit");
-        const dead = this.enemies.hurt(e, b.damage);
+        const dead = this.enemies.hurt(e, this.damageVs(b, e));
         this.bullets.pool.release(b);
-        if (dead) {
-          const color = e.type === "sprinter" ? "#7BA24A" : "#A8D9B8";
-          this.particles.puff(e.x, 0.4, e.z, color);
-          this.kills += 1;
+        if (dead) this.onEnemyKilled(e);
+      }
+    }
+  }
+
+  /** 已穿过金门的子弹 ×2；已走过金门、处在门与小队之间的敌人承伤 ×0.5 */
+  damageVs(b: { damage: number; amplified: boolean; x: number }, e: { z: number; x: number }): number {
+    let dmg = b.damage;
+    if (b.amplified) dmg *= GOLD_AMP_MUL;
+    for (const g of this.gates.ampGates()) {
+      if (Math.abs(e.x - g.x) <= LANE_HALF + 1.2 && e.z < g.z) {
+        dmg *= GOLD_NEAR_MUL;
+        break;
+      }
+    }
+    return dmg;
+  }
+
+  onEnemyKilled(e: Enemy): void {
+    if (e.type === "splitter" && !e.isChild) {
+      this.spawnSplitlings(e);
+    }
+    const color = enemyPuffColor(e.type);
+    this.particles.puff(e.x, 0.4, e.z, color);
+    this.kills += 1;
+  }
+
+  private spawnSplitlings(e: Enemy): void {
+    const lane = e.x < 0 ? "left" : "right";
+    const offsets = [-0.75, 0.75];
+    for (const off of offsets) {
+      this.spawnEnemy("splitling", lane, {
+        x: e.x + off,
+        z: e.z + 0.15,
+        isChild: true,
+      });
+    }
+  }
+
+  private onPropOpened(p: WorldProp): void {
+    if (p.kind === "cage") {
+      this.squad.add(CAGE_REWARD);
+      this.particles.puff(p.x, 0.6, p.z, "#E8D48A");
+      this.audio.play("gate");
+      this.props.pool.release(p);
+      return;
+    }
+    this.explodeBarrel(p, false);
+  }
+
+  private explodeBarrel(p: WorldProp, onSquad: boolean): void {
+    this.particles.burst(p.x, 0.6, p.z, "#E39A3A");
+    this.audio.play("red");
+    this.shake = Math.max(this.shake, 0.24);
+    if (!onSquad) {
+      const list = this.enemies.pool.active.slice();
+      for (const e of list) {
+        if (!e.alive) continue;
+        const dx = e.x - p.x;
+        const dz = e.z - p.z;
+        if (dx * dx + dz * dz <= BARREL_AOE_RADIUS * BARREL_AOE_RADIUS) {
+          const dead = this.enemies.hurt(e, BARREL_AOE_DAMAGE);
+          if (dead) this.onEnemyKilled(e);
         }
       }
     }
+    this.props.pool.release(p);
   }
 
   private collideGates(): void {
@@ -336,6 +571,7 @@ export class Game {
     const list = this.gates.pool.active.slice();
     for (const g of list) {
       if (!g || !this.gates.pool.active.includes(g)) continue;
+      if (g.kind === "amp" || g.stationary) continue;
       if (g.z > TEAM_Z + 0.6) continue;
       if (this.gates.overlaps(g, this.squad.x) && !g.consumed) {
         g.consumed = true;
@@ -366,11 +602,36 @@ export class Game {
     }
   }
 
+  private collideProps(): void {
+    const list = this.props.pool.active.slice();
+    for (const p of list) {
+      if (!p || !this.props.pool.active.includes(p)) continue;
+      if (p.z > TEAM_Z + 0.8) continue;
+      const near = Math.abs(p.x - this.squad.x) <= LANE_HALF + 0.35;
+      if (p.z <= TEAM_Z + 0.8 && p.z >= TEAM_Z - 1.4 && near) {
+        if (p.kind === "barrel") {
+          this.explodeBarrel(p, true);
+          if (this.squad.iframes <= 0) {
+            this.squad.lose(BARREL_CONTACT_LOSS);
+            this.shake = 0.28;
+          }
+        } else {
+          // 未打开的人质笼只是错过奖励，不清队
+          this.particles.puff(p.x, 0.4, p.z, "#C9C0B0");
+          this.props.pool.release(p);
+        }
+        if (this.squad.count <= 0) return;
+      } else if (p.z <= TEAM_Z - 0.8) {
+        this.props.pool.release(p);
+      }
+    }
+  }
+
   private collideEnemies(): void {
     if (this.squad.count <= 0) return;
-    const list = this.enemies.pool.active;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const e = list[i];
+    const list = this.enemies.pool.active.slice();
+    for (const e of list) {
+      if (!e || !this.enemies.pool.active.includes(e)) continue;
       if (e.z > TEAM_Z + 1.1) continue;
       const dx = Math.abs(e.x - this.squad.x);
       if (dx > LANE_X * 0.85) {
@@ -380,14 +641,16 @@ export class Game {
         continue;
       }
       if (e.z <= TEAM_Z + 1.1 && e.z >= TEAM_Z - 1.4) {
+        const loss = ENEMY[e.type].contactLoss;
+        const color = enemyPuffColor(e.type);
         if (this.squad.iframes > 0) {
-          this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
+          this.particles.puff(e.x, 0.4, e.z, color);
           this.enemies.pool.release(e);
           continue;
         }
-        this.squad.lose(1);
+        this.squad.lose(loss);
         this.shake = 0.28;
-        this.particles.puff(e.x, 0.4, e.z, e.type === "sprinter" ? "#7BA24A" : "#A8D9B8");
+        this.particles.puff(e.x, 0.4, e.z, color);
         this.audio.play("red");
         this.enemies.pool.release(e);
         if (this.squad.count <= 0) return;
@@ -445,8 +708,17 @@ export class Game {
 
     type DrawItem = { z: number; draw: () => void };
     const items: DrawItem[] = [];
+    if (this.warningLane && this.state === "playing") {
+      items.push({
+        z: 28,
+        draw: () => drawLaneWarning(ctx, this.warningLane!, camX, this.warningImpactAt - this.time),
+      });
+    }
     for (const g of this.gates.pool.active) {
       items.push({ z: g.z, draw: () => drawGate(ctx, g, camX) });
+    }
+    for (const p of this.props.pool.active) {
+      items.push({ z: p.z, draw: () => drawProp(ctx, p, camX) });
     }
     for (const e of this.enemies.pool.active) {
       items.push({ z: e.z, draw: () => drawEnemy(ctx, e, camX) });
@@ -473,6 +745,9 @@ export class Game {
         fireBonus: this.squad.fireBonus,
         muted: this.audio.muted,
         hint: this.hint,
+        warning: this.warningLane
+          ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) }
+          : null,
       });
     } else if (this.state === "title") {
       drawTitle(ctx, this.best, this.audio.muted);
@@ -484,3 +759,10 @@ export class Game {
   }
 }
 
+function enemyPuffColor(type: EnemyId): string {
+  if (type === "sprinter" || type === "jumper") return "#7BA24A";
+  if (type === "bomber") return "#E39A3A";
+  if (type === "shield") return "#C4A574";
+  if (type === "splitter" || type === "splitling") return "#8FBF88";
+  return "#A8D9B8";
+}
