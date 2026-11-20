@@ -1,4 +1,4 @@
-import { TIMELINE, MAX_SQUAD, WEAPONS, ENEMY, FINAL_WAVE_LAST_SPAWN } from "../src/config";
+import { TIMELINE, MAX_SQUAD, MAX_BULLETS, WEAPONS, ENEMY, SCRIPT_ENEMY_END } from "../src/config";
 import { Game } from "../src/game";
 import { Squad } from "../src/squad";
 import type { Platform, PointerSample } from "../src/platform";
@@ -105,7 +105,7 @@ console.log("1. 时间轴约束");
   assert(reds.every((g) => g.time >= 15), "前 15 秒绝不出红门");
   assert(reds.some((g) => g.time >= 40 && g.time <= 45 && g.value === 3), "约 40 秒后有一扇红门 -3");
   const addAfter70 = gates.filter((g) => g.time >= 70 && (g.gate === "add" || g.gate === "mul"));
-  assert(addAfter70.length === 0, "70 秒后不再出加人门");
+  assert(addAfter70.length === 0, "脚本时间轴在 70 秒后不再排加人门（之后由无尽段补门）");
   assert(enemies.every((e) => e.enemy === "walker" || e.enemy === "sprinter"), "本阶只有游走体和冲刺体");
   const types = new Set(enemies.map((e) => e.enemy));
   assert(types.has("walker") && types.has("sprinter"), "时间轴包含游走体与冲刺体");
@@ -114,7 +114,7 @@ console.log("1. 时间轴约束");
   assert(WEAPONS.pistol.damage === 1 && WEAPONS.pistol.rate === 4, "手枪伤害 1.0、约 4 发/秒");
   assert(WEAPONS.smg.damage === 0.7 && WEAPONS.smg.rate === 12 && WEAPONS.smg.duration === 15, "冲锋枪数值符合规格");
   const lastEnemy = Math.max(...enemies.map((e) => e.time));
-  assertClose(lastEnemy, FINAL_WAVE_LAST_SPAWN, 0.01, "收束波最后出现时间与常量一致");
+  assertClose(lastEnemy, SCRIPT_ENEMY_END, 0.01, "脚本段最后出现时间与常量一致");
 }
 
 console.log("2. 小队人数顶与射速加成");
@@ -218,17 +218,15 @@ console.log("4. 穿门效果、失败与通关");
   failGame.step(0.05);
   assertEq(failGame.getState().state, "fail", "人数归零进入失败结算");
 
-  // 通关：跳到收束波结束后且清场
-  const winGame = new Game(mockPlatform());
-  winGame.beginRun();
-  winGame.squad.setCount(20);
-  winGame.step(90.2);
-  // 若还有敌人，继续清空（直接清池模拟打完）
-  winGame.enemies.clear();
-  winGame.step(0.1);
-  const ws = winGame.getState();
-  assertEq(ws.state, "win", "坚持 90 秒并打完收束波后通关");
-  assert(ws.finalWaveSpawned, "收束波已放出");
+  // 无尽生存：过 90 秒且人数仍在则继续对局，不会通关结算
+  const liveGame = new Game(mockPlatform());
+  liveGame.beginRun();
+  liveGame.squad.setCount(20);
+  liveGame.step(95);
+  const live = liveGame.getState();
+  assertEq(live.state, "playing", "坚持过 90 秒也不会通关结算");
+  assert(live.time >= 94.9, "逻辑时间应能推进过 90 秒，当前 " + live.time.toFixed(2));
+  assert(live.enemies.length >= 1, "脚本段结束后仍继续出怪，当前 " + live.enemies.length);
 }
 
 console.log("5. 靠右道开火可清掉开局游走体");
@@ -250,8 +248,8 @@ console.log("6. 对象上限与绘制不抛错");
   game.beginRun();
   game.squad.setCount(20);
   game.step(8);
-  for (let i = 0; i < 50; i++) game.bullets.spawn(0, 14, 1);
-  assert(game.bullets.pool.size <= 40, "同屏子弹不超过 40");
+  for (let i = 0; i < 100; i++) game.bullets.spawn(0, 14, 1);
+  assert(game.bullets.pool.size <= MAX_BULLETS, "同屏子弹不超过 " + MAX_BULLETS);
   assert(game.enemies.pool.size <= 25, "同屏敌人不超过 25");
   assert(game.squad.pool.size <= 20, "我方不超过 20");
   let threw = false;
@@ -290,6 +288,28 @@ console.log("7. 穿过成对红蓝门后不应卡死");
   assert(st.state === "playing" || st.state === "win" || st.state === "fail", "对局仍处于有效状态，得到 " + st.state);
   assert(st.time >= 50 || st.state !== "playing", "逻辑时间应能推进过 43.6 秒（当前 " + st.time.toFixed(2) + "，状态 " + st.state + "）");
   assert(st.squadCount >= 4, "一直走左道应已吃到加人门，人数 " + st.squadCount);
+}
+
+console.log("8. 每个小兵各一条弹道");
+{
+  const one = new Game(mockPlatform());
+  one.beginRun();
+  one.squad.setCount(1);
+  one.squad.x = 0;
+  one.input.targetX = 0;
+  one.step(0.3);
+  const oneXs = [...new Set(one.bullets.pool.active.map((b) => +b.x.toFixed(3)))];
+  assert(oneXs.length === 1, "1 人时应只有一条弹道，得到 " + oneXs.join(", "));
+
+  const two = new Game(mockPlatform());
+  two.beginRun();
+  two.squad.setCount(2);
+  two.squad.x = 0;
+  two.input.targetX = 0;
+  two.step(0.3);
+  const twoXs = [...new Set(two.bullets.pool.active.map((b) => +b.x.toFixed(3)))];
+  assert(twoXs.length >= 2, "2 人时应有两条弹道，得到 " + twoXs.join(", "));
+  assert(Math.abs(twoXs[0] - twoXs[1]) >= 0.5, "两条弹道应明显分开，间距 " + Math.abs(twoXs[0] - (twoXs[1] ?? 0)).toFixed(2));
 }
 
 console.log("");

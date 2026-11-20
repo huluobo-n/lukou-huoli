@@ -5,7 +5,6 @@ import {
   OVERFLOW_BONUS_DURATION,
   OVERFLOW_BONUS_MUL,
   TEAM_Z,
-  VISUAL_FIRE_CAP,
   WEAPONS,
   type WeaponId,
 } from "./config";
@@ -64,7 +63,6 @@ export class Squad {
   iframes = 0;
   fireBonus = 0;
   fireCd = 0;
-  private firePhase = 0;
   readonly pool = new Pool<Soldier>(MAX_SQUAD, () => ({
     alive: false,
     slot: 0,
@@ -82,7 +80,6 @@ export class Squad {
     this.iframes = 0;
     this.fireBonus = 0;
     this.fireCd = 0;
-    this.firePhase = 0;
     this.pool.clear();
     this.syncMembers();
   }
@@ -153,19 +150,24 @@ export class Squad {
     }
   }
 
-  /** 返回本帧应发射的伤害（可能为 0）以及用于散布的相位 */
-  tryFire(dt: number): { damage: number; x: number; phase: number } | null {
-    if (this.count <= 0) return null;
+  /** 每次齐射：每个小兵从自己的位置发出一发，互不重叠到同一条弹道 */
+  tryFire(dt: number): { damage: number; x: number; z: number }[] {
+    if (this.count <= 0) return [];
     const def = this.weaponDef;
-    const desired = def.rate * this.count * this.fireMul;
-    const visual = Math.min(desired, VISUAL_FIRE_CAP);
-    const dmg = def.damage * (desired / visual);
+    const rate = def.rate * this.fireMul;
     this.fireCd -= dt;
-    if (this.fireCd > 0) return null;
-    this.fireCd += 1 / Math.max(visual, 0.01);
-    this.firePhase = (this.firePhase + 1) % Math.max(1, this.count);
-    const slot = this.slotOf(this.firePhase % this.count);
-    return { damage: dmg, x: this.x + slot.x * 0.35, phase: this.firePhase };
+    if (this.fireCd > 0) return [];
+    this.fireCd += 1 / Math.max(rate, 0.01);
+    const shots: { damage: number; x: number; z: number }[] = [];
+    for (let i = 0; i < this.count; i++) {
+      const slot = this.slotOf(i);
+      shots.push({
+        damage: def.damage,
+        x: this.x + slot.x,
+        z: this.z + slot.z,
+      });
+    }
+    return shots;
   }
 
   private syncMembers(): void {

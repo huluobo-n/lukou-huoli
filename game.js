@@ -16,11 +16,9 @@
   var BASE_SPEED = 14;
   var BULLET_SPEED = 52;
   var BULLET_RANGE_Z = 50;
-  var MAX_BULLETS = 40;
+  var MAX_BULLETS = 80;
   var MAX_ENEMIES = 25;
   var MAX_SQUAD = 20;
-  var VISUAL_FIRE_CAP = 18;
-  var RUN_DURATION = 90;
   var WEAPONS = {
     pistol: {
       id: "pistol",
@@ -114,7 +112,20 @@
     return a.kind === "gate" ? -1 : 1;
   });
   var enemyTimes = TIMELINE.filter((e) => e.kind === "enemy").map((e) => e.time);
-  var FINAL_WAVE_LAST_SPAWN = Math.max(...enemyTimes);
+  var SCRIPT_ENEMY_END = Math.max(...enemyTimes);
+  var ENDLESS_GATE_START = 75;
+  var ENDLESS_GATE_PERIOD = 8;
+  var ENDLESS_GATE_CYCLE = [
+    { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
+    { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
+    { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+    { time: 0, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+    { time: 0, kind: "gate", lane: "left", gate: "mul", value: 2, label: "\xD72" },
+    { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" }
+  ];
+  function endlessHordeInterval(t) {
+    return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 12e-4);
+  }
 
   // src/platform.ts
   function isWx() {
@@ -950,7 +961,7 @@
     return { sx, sy, scale: t, groundY };
   }
   function formatTime(sec) {
-    const s = Math.max(0, Math.ceil(sec));
+    const s = Math.max(0, Math.floor(sec));
     const m = Math.floor(s / 60);
     const r = s % 60;
     return m + ":" + (r < 10 ? "0" : "") + r;
@@ -1350,11 +1361,11 @@
     ctx.fillText(wname + extra, midX + 62, 79);
     pill(ctx, CANVAS_W - 206, 48, 172, 60, "rgba(255,248,230,0.94)");
     drawClockIcon(ctx, CANVAS_W - 178, 78, 13);
-    ctx.fillStyle = hud.remain <= 10 && !hud.clearing ? "#C45A16" : "#5A3E22";
+    ctx.fillStyle = "#5A3E22";
     ctx.font = 'bold 28px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(hud.clearing ? "\u6E05\u573A" : formatTime(hud.remain), CANVAS_W - 112, 79);
+    ctx.fillText(formatTime(hud.remain), CANVAS_W - 112, 79);
     if (hud.fireBonus > 0) {
       pill(ctx, 36, 122, 200, 36, "rgba(86,160,90,0.94)");
       ctx.fillStyle = "#FFFFFF";
@@ -1477,7 +1488,7 @@
   function legalHit(x, y) {
     return x >= CANVAS_W / 2 - 110 && x <= CANVAS_W / 2 + 110 && y >= 800 && y <= 864;
   }
-  function drawResult(ctx, win, kills, time, peak, best) {
+  function drawResult(ctx, kills, time, peak, best) {
     dim(ctx);
     ctx.fillStyle = "rgba(255,248,230,0.96)";
     roundRect(ctx, 80, 250, CANVAS_W - 160, 620, 28);
@@ -1485,14 +1496,15 @@
     ctx.fillStyle = "#5A3E22";
     ctx.textAlign = "center";
     ctx.font = 'bold 48px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.fillText(win ? "\u6210\u529F\u901A\u5173\uFF01" : "\u961F\u4F0D\u5DF2\u89E3\u6563", CANVAS_W / 2, 340);
+    ctx.fillText("\u672C\u5C40\u7ED3\u675F", CANVAS_W / 2, 340);
     ctx.font = '22px "PingFang SC","Microsoft YaHei",sans-serif';
     ctx.fillStyle = "rgba(90,62,34,0.85)";
-    ctx.fillText(win ? "\u575A\u6301\u5230\u4E86\u7EC8\u70B9\u5E76\u6E05\u7A7A\u4E86\u6536\u675F\u6CE2" : "\u4EBA\u6570\u5F52\u96F6\uFF0C\u518D\u6574\u961F\u51FA\u53D1\u5427", CANVAS_W / 2, 400);
+    ctx.fillText("\u4EBA\u6570\u5F52\u96F6 \xB7 \u6BD4\u6BD4\u8C01\u575A\u6301\u5F97\u66F4\u4E45", CANVAS_W / 2, 400);
     const rows = [
-      ["\u51FB\u6740", String(kills)],
       ["\u575A\u6301\u65F6\u95F4", formatTime(time)],
+      ["\u51FB\u6740", String(kills)],
       ["\u672C\u5C40\u6700\u9AD8\u4EBA\u6570", String(peak)],
+      ["\u6700\u957F\u575A\u6301", formatTime(best.time)],
       ["\u5386\u53F2\u6700\u9AD8\u51FB\u6740", String(best.kills)],
       ["\u5386\u53F2\u6700\u9AD8\u4EBA\u6570", String(best.peakCount)]
     ];
@@ -1590,7 +1602,6 @@
       this.iframes = 0;
       this.fireBonus = 0;
       this.fireCd = 0;
-      this.firePhase = 0;
       this.pool = new Pool(MAX_SQUAD, () => ({
         alive: false,
         slot: 0,
@@ -1608,7 +1619,6 @@
       this.iframes = 0;
       this.fireBonus = 0;
       this.fireCd = 0;
-      this.firePhase = 0;
       this.pool.clear();
       this.syncMembers();
     }
@@ -1669,19 +1679,24 @@
         if (s.flash > 0) s.flash = Math.max(0, s.flash - dt);
       }
     }
-    /** 返回本帧应发射的伤害（可能为 0）以及用于散布的相位 */
+    /** 每次齐射：每个小兵从自己的位置发出一发，互不重叠到同一条弹道 */
     tryFire(dt) {
-      if (this.count <= 0) return null;
+      if (this.count <= 0) return [];
       const def = this.weaponDef;
-      const desired = def.rate * this.count * this.fireMul;
-      const visual = Math.min(desired, VISUAL_FIRE_CAP);
-      const dmg = def.damage * (desired / visual);
+      const rate = def.rate * this.fireMul;
       this.fireCd -= dt;
-      if (this.fireCd > 0) return null;
-      this.fireCd += 1 / Math.max(visual, 0.01);
-      this.firePhase = (this.firePhase + 1) % Math.max(1, this.count);
-      const slot = this.slotOf(this.firePhase % this.count);
-      return { damage: dmg, x: this.x + slot.x * 0.35, phase: this.firePhase };
+      if (this.fireCd > 0) return [];
+      this.fireCd += 1 / Math.max(rate, 0.01);
+      const shots = [];
+      for (let i = 0; i < this.count; i++) {
+        const slot = this.slotOf(i);
+        shots.push({
+          damage: def.damage,
+          x: this.x + slot.x,
+          z: this.z + slot.z
+        });
+      }
+      return shots;
     }
     syncMembers() {
       this.pool.clear();
@@ -1707,8 +1722,6 @@
       this.kills = 0;
       this.hint = true;
       this.hintTimer = 0;
-      this.clearing = false;
-      this.finalWaveSpawned = false;
       this.shake = 0;
       this.squad = new Squad();
       this.enemies = new Enemies();
@@ -1717,6 +1730,10 @@
       this.particles = new Particles();
       this.cursor = 0;
       this.pendingPairs = /* @__PURE__ */ new Map();
+      this.nextHordeAt = 0;
+      this.nextGateAt = 0;
+      this.endlessGateI = 0;
+      this.hordeSkipUntil = 0;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -1783,9 +1800,7 @@
           hp: e.hp
         })),
         bullets: this.bullets.pool.size,
-        remain: this.clearing ? 0 : Math.max(0, RUN_DURATION - this.time),
-        finalWaveSpawned: this.finalWaveSpawned,
-        clearing: this.clearing
+        remain: this.time
       };
     }
     beginRun() {
@@ -1794,11 +1809,13 @@
       this.kills = 0;
       this.hint = true;
       this.hintTimer = 0;
-      this.clearing = false;
-      this.finalWaveSpawned = false;
       this.shake = 0;
       this.cursor = 0;
       this.pendingPairs.clear();
+      this.nextHordeAt = SCRIPT_ENEMY_END + 0.28;
+      this.nextGateAt = ENDLESS_GATE_START;
+      this.endlessGateI = 0;
+      this.hordeSkipUntil = 0;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -1823,6 +1840,7 @@
       const target = this.input.update(dt, this.squad.x);
       this.squad.update(dt, target);
       this.spawnDue();
+      this.spawnEndless();
       this.gates.update(dt);
       this.enemies.update(dt);
       this.shoot(dt);
@@ -1832,14 +1850,9 @@
       this.collideEnemies();
       this.particles.update(dt);
       if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
-      if (this.time >= FINAL_WAVE_LAST_SPAWN + 0.05) this.finalWaveSpawned = true;
-      if (this.time >= RUN_DURATION) this.clearing = true;
       if (this.squad.count <= 0) {
-        this.endRun(false);
+        this.endRun();
         return;
-      }
-      if (this.clearing && this.finalWaveSpawned && this.enemies.pool.size === 0) {
-        this.endRun(true);
       }
     }
     spawnDue() {
@@ -1847,6 +1860,43 @@
         const ev = TIMELINE[this.cursor++];
         this.applyEvent(ev);
         this.spawned.push(ev);
+      }
+    }
+    /** 脚本段结束后继续出怪和补门，直到人数归零 */
+    spawnEndless() {
+      while (this.time >= this.nextHordeAt) {
+        const t = this.nextHordeAt;
+        if (t >= this.hordeSkipUntil) {
+          this.enemies.spawn("walker", "right");
+          this.enemies.spawn("sprinter", "right");
+        }
+        this.nextHordeAt += endlessHordeInterval(t);
+      }
+      while (this.time >= this.nextGateAt) {
+        const t = this.nextGateAt;
+        const ev = ENDLESS_GATE_CYCLE[this.endlessGateI % ENDLESS_GATE_CYCLE.length];
+        const pair = this.endlessGateI % 4 === 3;
+        const pairKey = pair ? this.gates.nextPairKey() : 0;
+        this.gates.spawn({
+          kind: ev.gate,
+          lane: ev.lane,
+          value: ev.value,
+          weapon: ev.weapon,
+          label: ev.label || "",
+          pairKey
+        });
+        if (pair) {
+          this.gates.spawn({
+            kind: "red",
+            lane: "right",
+            value: 3,
+            label: "-3",
+            pairKey
+          });
+          this.hordeSkipUntil = t + 1.3;
+        }
+        this.endlessGateI += 1;
+        this.nextGateAt += ENDLESS_GATE_PERIOD;
       }
     }
     applyEvent(ev) {
@@ -1877,16 +1927,19 @@
         });
       }
     }
-    fireLaneX() {
-      if (this.squad.x >= 0.45) return LANE_X;
-      if (this.squad.x <= -0.45) return -LANE_X;
-      return this.squad.x;
-    }
     shoot(dt) {
-      const shot = this.squad.tryFire(dt);
-      if (!shot) return;
-      const b = this.bullets.spawn(this.fireLaneX(), this.squad.z, shot.damage);
-      if (b) this.audio.play("shoot");
+      const shots = this.squad.tryFire(dt);
+      if (!shots.length) return;
+      const room = Math.max(0, this.bullets.pool.max - this.bullets.pool.size);
+      if (room <= 0) return;
+      const n = Math.min(shots.length, room);
+      const damage = shots[0].damage * (shots.length / n);
+      let any = false;
+      for (let i = 0; i < n; i++) {
+        const src = shots[Math.floor(i * shots.length / n)];
+        if (this.bullets.spawn(src.x, src.z, damage)) any = true;
+      }
+      if (any) this.audio.play("shoot");
     }
     collideBullets() {
       const bullets = this.bullets.pool.active;
@@ -1977,14 +2030,14 @@
         }
       }
     }
-    endRun(win) {
-      this.state = win ? "win" : "fail";
+    endRun() {
+      this.state = "fail";
       this.best = saveBest(
         this.platform,
         { kills: this.kills, peakCount: this.squad.peak, time: this.time },
         this.best
       );
-      this.audio.play(win ? "win" : "fail");
+      this.audio.play("fail");
     }
     handleClick(x, y) {
       this.audio.unlock();
@@ -2044,18 +2097,17 @@
           count: this.squad.count,
           weapon: this.squad.weapon === "smg" ? "smg" : "pistol",
           weaponTime: this.squad.weaponTime,
-          remain: this.clearing ? 0 : Math.max(0, RUN_DURATION - this.time),
+          remain: this.time,
           fireBonus: this.squad.fireBonus,
           muted: this.audio.muted,
-          hint: this.hint,
-          clearing: this.clearing
+          hint: this.hint
         });
       } else if (this.state === "title") {
         drawTitle(ctx, this.best, this.audio.muted);
       } else if (this.state === "legal") {
         drawLegal(ctx);
       } else {
-        drawResult(ctx, this.state === "win", this.kills, this.time, this.squad.peak, this.best);
+        drawResult(ctx, this.kills, this.time, this.squad.peak, this.best);
       }
     }
   };

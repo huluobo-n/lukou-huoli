@@ -8,7 +8,6 @@ import {
   LANE_X,
   NEAR_Y,
   ROAD_HALF,
-  RUN_DURATION,
   SPAWN_Z,
   TEAM_Z,
   WEAPONS,
@@ -460,7 +459,6 @@ export interface HudInfo {
   fireBonus: number;
   muted: boolean;
   hint: boolean;
-  clearing: boolean;
 }
 
 export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
@@ -501,14 +499,14 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
   ctx.textBaseline = "middle";
   ctx.fillText(wname + extra, midX + 62, 79);
 
-  // 右：倒计时
+  // 右：已坚持时间
   pill(ctx, CANVAS_W - 206, 48, 172, 60, "rgba(255,248,230,0.94)");
   drawClockIcon(ctx, CANVAS_W - 178, 78, 13);
-  ctx.fillStyle = hud.remain <= 10 && !hud.clearing ? "#C45A16" : "#5A3E22";
+  ctx.fillStyle = "#5A3E22";
   ctx.font = 'bold 28px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(hud.clearing ? "清场" : formatTime(hud.remain), CANVAS_W - 112, 79);
+  ctx.fillText(formatTime(hud.remain), CANVAS_W - 112, 79);
 
   if (hud.fireBonus > 0) {
     pill(ctx, 36, 122, 200, 36, "rgba(86,160,90,0.94)");
@@ -660,11 +658,10 @@ export function legalHit(x: number, y: number): boolean {
 
 export function drawResult(
   ctx: CanvasRenderingContext2D,
-  win: boolean,
   kills: number,
   time: number,
   peak: number,
-  best: { kills: number; peakCount: number },
+  best: { kills: number; peakCount: number; time: number },
 ): void {
   dim(ctx);
   ctx.fillStyle = "rgba(255,248,230,0.96)";
@@ -673,15 +670,16 @@ export function drawResult(
   ctx.fillStyle = "#5A3E22";
   ctx.textAlign = "center";
   ctx.font = 'bold 48px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.fillText(win ? "成功通关！" : "队伍已解散", CANVAS_W / 2, 340);
+  ctx.fillText("本局结束", CANVAS_W / 2, 340);
   ctx.font = '22px "PingFang SC","Microsoft YaHei",sans-serif';
   ctx.fillStyle = "rgba(90,62,34,0.85)";
-  ctx.fillText(win ? "坚持到了终点并清空了收束波" : "人数归零，再整队出发吧", CANVAS_W / 2, 400);
+  ctx.fillText("人数归零 · 比比谁坚持得更久", CANVAS_W / 2, 400);
 
   const rows = [
-    ["击杀", String(kills)],
     ["坚持时间", formatTime(time)],
+    ["击杀", String(kills)],
     ["本局最高人数", String(peak)],
+    ["最长坚持", formatTime(best.time)],
     ["历史最高击杀", String(best.kills)],
     ["历史最高人数", String(best.peakCount)],
   ];
@@ -756,4 +754,3 @@ function wrapText(
   if (line) ctx.fillText(line, x, yy);
 }
 
-export { RUN_DURATION };

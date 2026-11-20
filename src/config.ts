@@ -17,12 +17,9 @@ export const ROAD_HALF = 6.4;
 export const BASE_SPEED = 14;
 export const BULLET_SPEED = 52;
 export const BULLET_RANGE_Z = 50;
-export const MAX_BULLETS = 40;
+export const MAX_BULLETS = 80;
 export const MAX_ENEMIES = 25;
 export const MAX_SQUAD = 20;
-export const VISUAL_FIRE_CAP = 18;
-
-export const RUN_DURATION = 90;
 
 export const WEAPONS = {
   pistol: {
@@ -150,7 +147,7 @@ function buildHorde(): TimelineEvent[] {
     addEnemy(events, t + 0.12, "sprinter");
   }
 
-  // 70–收束：更密的成对波
+  // 70 秒后脚本段继续加密，之后由对局逻辑无限出怪
   for (let t = 70; t <= 87; t += 0.36) {
     addEnemy(events, t, "walker");
     addEnemy(events, t + 0.1, "sprinter");
@@ -164,6 +161,24 @@ export const TIMELINE: TimelineEvent[] = [...GATE_EVENTS, ...buildHorde()].sort(
   return a.kind === "gate" ? -1 : 1;
 });
 
-/** 收束波最后一只的出现时间，用于判定「已放出收束波」 */
+/** 脚本段最后一只感染体的出现时间，之后进入无尽出怪 */
 const enemyTimes = TIMELINE.filter((e) => e.kind === "enemy").map((e) => e.time);
-export const FINAL_WAVE_LAST_SPAWN = Math.max(...enemyTimes);
+export const SCRIPT_ENEMY_END = Math.max(...enemyTimes);
+
+/** 无尽段开始补门的时间、间隔，以及循环内容 */
+export const ENDLESS_GATE_START = 75;
+export const ENDLESS_GATE_PERIOD = 8;
+
+export const ENDLESS_GATE_CYCLE: TimelineEvent[] = [
+  { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
+  { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
+  { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+  { time: 0, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+  { time: 0, kind: "gate", lane: "left", gate: "mul", value: 2, label: "×2" },
+  { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
+];
+
+/** 无尽段成对出怪的间隔，随时间缓慢加密，最短 0.22 秒 */
+export function endlessHordeInterval(t: number): number {
+  return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 0.0012);
+}

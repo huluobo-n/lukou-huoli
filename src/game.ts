@@ -1,9 +1,12 @@
 import {
-  FINAL_WAVE_LAST_SPAWN,
+  ENDLESS_GATE_CYCLE,
+  ENDLESS_GATE_PERIOD,
+  ENDLESS_GATE_START,
   LANE_X,
-  RUN_DURATION,
+  SCRIPT_ENEMY_END,
   TEAM_Z,
   TIMELINE,
+  endlessHordeInterval,
   type TimelineEvent,
 } from "./config";
 import { ads } from "./ads";
@@ -50,8 +53,6 @@ export interface PublicState {
   enemies: { type: string; z: number; hp: number }[];
   bullets: number;
   remain: number;
-  finalWaveSpawned: boolean;
-  clearing: boolean;
 }
 
 export class Game {
@@ -63,8 +64,6 @@ export class Game {
   best: BestRecord;
   hint = true;
   hintTimer = 0;
-  clearing = false;
-  finalWaveSpawned = false;
   shake = 0;
   readonly squad = new Squad();
   readonly enemies = new Enemies();
@@ -75,6 +74,10 @@ export class Game {
   readonly audio: AudioSys;
   private cursor = 0;
   private pendingPairs = new Map<number, number>();
+  private nextHordeAt = 0;
+  private nextGateAt = 0;
+  private endlessGateI = 0;
+  private hordeSkipUntil = 0;
   paused = false;
   private running = false;
   private lastTs = 0;
@@ -146,9 +149,7 @@ export class Game {
         hp: e.hp,
       })),
       bullets: this.bullets.pool.size,
-      remain: this.clearing ? 0 : Math.max(0, RUN_DURATION - this.time),
-      finalWaveSpawned: this.finalWaveSpawned,
-      clearing: this.clearing,
+      remain: this.time,
     };
   }
 
@@ -158,11 +159,13 @@ export class Game {
     this.kills = 0;
     this.hint = true;
     this.hintTimer = 0;
-    this.clearing = false;
-    this.finalWaveSpawned = false;
     this.shake = 0;
     this.cursor = 0;
     this.pendingPairs.clear();
+    this.nextHordeAt = SCRIPT_ENEMY_END + 0.28;
+    this.nextGateAt = ENDLESS_GATE_START;
+    this.endlessGateI = 0;
+    this.hordeSkipUntil = 0;
     this.spawned.length = 0;
     this.squad.reset();
     this.enemies.clear();
@@ -191,6 +194,7 @@ export class Game {
     const target = this.input.update(dt, this.squad.x);
     this.squad.update(dt, target);
     this.spawnDue();
+    this.spawnEndless();
     this.gates.update(dt);
     this.enemies.update(dt);
     this.shoot(dt);
@@ -201,15 +205,9 @@ export class Game {
     this.particles.update(dt);
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
 
-    if (this.time >= FINAL_WAVE_LAST_SPAWN + 0.05) this.finalWaveSpawned = true;
-    if (this.time >= RUN_DURATION) this.clearing = true;
-
     if (this.squad.count <= 0) {
-      this.endRun(false);
+      this.endRun();
       return;
-    }
-    if (this.clearing && this.finalWaveSpawned && this.enemies.pool.size === 0) {
-      this.endRun(true);
     }
   }
 
@@ -218,6 +216,44 @@ export class Game {
       const ev = TIMELINE[this.cursor++];
       this.applyEvent(ev);
       this.spawned.push(ev);
+    }
+  }
+
+  /** 脚本段结束后继续出怪和补门，直到人数归零 */
+  private spawnEndless(): void {
+    while (this.time >= this.nextHordeAt) {
+      const t = this.nextHordeAt;
+      if (t >= this.hordeSkipUntil) {
+        this.enemies.spawn("walker", "right");
+        this.enemies.spawn("sprinter", "right");
+      }
+      this.nextHordeAt += endlessHordeInterval(t);
+    }
+    while (this.time >= this.nextGateAt) {
+      const t = this.nextGateAt;
+      const ev = ENDLESS_GATE_CYCLE[this.endlessGateI % ENDLESS_GATE_CYCLE.length];
+      const pair = this.endlessGateI % 4 === 3;
+      const pairKey = pair ? this.gates.nextPairKey() : 0;
+      this.gates.spawn({
+        kind: ev.gate!,
+        lane: ev.lane,
+        value: ev.value,
+        weapon: ev.weapon,
+        label: ev.label || "",
+        pairKey,
+      });
+      if (pair) {
+        this.gates.spawn({
+          kind: "red",
+          lane: "right",
+          value: 3,
+          label: "-3",
+          pairKey,
+        });
+        this.hordeSkipUntil = t + 1.3;
+      }
+      this.endlessGateI += 1;
+      this.nextGateAt += ENDLESS_GATE_PERIOD;
     }
   }
 
@@ -249,17 +285,19 @@ export class Game {
     }
   }
 
-  private fireLaneX(): number {
-    if (this.squad.x >= 0.45) return LANE_X;
-    if (this.squad.x <= -0.45) return -LANE_X;
-    return this.squad.x;
-  }
-
   private shoot(dt: number): void {
-    const shot = this.squad.tryFire(dt);
-    if (!shot) return;
-    const b = this.bullets.spawn(this.fireLaneX(), this.squad.z, shot.damage);
-    if (b) this.audio.play("shoot");
+    const shots = this.squad.tryFire(dt);
+    if (!shots.length) return;
+    const room = Math.max(0, this.bullets.pool.max - this.bullets.pool.size);
+    if (room <= 0) return;
+    const n = Math.min(shots.length, room);
+    const damage = shots[0].damage * (shots.length / n);
+    let any = false;
+    for (let i = 0; i < n; i++) {
+      const src = shots[Math.floor((i * shots.length) / n)];
+      if (this.bullets.spawn(src.x, src.z, damage)) any = true;
+    }
+    if (any) this.audio.play("shoot");
   }
 
   private collideBullets(): void {
@@ -357,14 +395,14 @@ export class Game {
     }
   }
 
-  private endRun(win: boolean): void {
-    this.state = win ? "win" : "fail";
+  private endRun(): void {
+    this.state = "fail";
     this.best = saveBest(
       this.platform,
       { kills: this.kills, peakCount: this.squad.peak, time: this.time },
       this.best,
     );
-    this.audio.play(win ? "win" : "fail");
+    this.audio.play("fail");
   }
 
   private handleClick(x: number, y: number): void {
@@ -431,18 +469,17 @@ export class Game {
         count: this.squad.count,
         weapon: this.squad.weapon === "smg" ? "smg" : "pistol",
         weaponTime: this.squad.weaponTime,
-        remain: this.clearing ? 0 : Math.max(0, RUN_DURATION - this.time),
+        remain: this.time,
         fireBonus: this.squad.fireBonus,
         muted: this.audio.muted,
         hint: this.hint,
-        clearing: this.clearing,
       });
     } else if (this.state === "title") {
       drawTitle(ctx, this.best, this.audio.muted);
     } else if (this.state === "legal") {
       drawLegal(ctx);
     } else {
-      drawResult(ctx, this.state === "win", this.kills, this.time, this.squad.peak, this.best);
+      drawResult(ctx, this.kills, this.time, this.squad.peak, this.best);
     }
   }
 }
