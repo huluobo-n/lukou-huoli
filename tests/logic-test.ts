@@ -173,6 +173,9 @@ console.log("3. 游戏启动与时间轴生成");
   const smg = st.gates.find((g) => g.label === "冲锋枪" && g.lane === "left");
   assert(!!smg, "紧接着出现冲锋枪门");
 
+  // 后段时间轴更密，1 人站右道会被撞死导致停表；这里只验收事件是否按点放出
+  game.squad.setCount(20);
+
   game.step(15.0); // t ≈ 22.4
   st = game.getState();
   const x2 = st.gates.find((g) => g.label === "×2") || game.spawned.find((e) => e.gate === "mul" && e.time <= 22.5);

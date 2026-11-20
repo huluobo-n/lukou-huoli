@@ -49,7 +49,9 @@ export class Enemies {
     const def = ENEMY[type];
     e.alive = true;
     e.type = type;
-    e.x = lane === "left" ? -LANE_X : LANE_X;
+    // 同一车道错开一点横向位置，连出时看起来是一群而不是单列重叠
+    const slot = this.pool.size % 3;
+    e.x = (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
     e.y = 0;
     e.z = SPAWN_Z;
     e.hp = def.hp;

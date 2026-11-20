@@ -64,77 +64,57 @@
   var OVERFLOW_BONUS_DURATION = 3;
   var OVERFLOW_BONUS_MUL = 1.6;
   var STORAGE_KEY = "lukou-huoli-best";
-  var TIMELINE = [
+  var GATE_EVENTS = [
     // —— 0–10 秒教学 ——
-    { time: 2, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 3, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 4, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 5, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 6, kind: "enemy", lane: "right", enemy: "walker" },
     { time: 6, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 7.25, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
-    // —— 10–40 秒：左道 +N / ×2 / 武器门，右道小股游走体 ——
+    // —— 10–40 秒：左道 +N / ×2 / 武器门 ——
     { time: 11.5, kind: "gate", lane: "left", gate: "add", value: 2, label: "+2" },
-    { time: 12, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 13.1, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 14.2, kind: "enemy", lane: "right", enemy: "walker" },
     { time: 16, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
-    { time: 17.5, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 18.6, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 19.7, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 20.8, kind: "enemy", lane: "right", enemy: "walker" },
     { time: 22, kind: "gate", lane: "left", gate: "mul", value: 2, label: "\xD72" },
-    { time: 24, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 25.2, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 26.4, kind: "enemy", lane: "right", enemy: "walker" },
     { time: 27, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-    { time: 30, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 31.2, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 32.4, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 33.6, kind: "enemy", lane: "right", enemy: "walker" },
     { time: 32.8, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 36.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
-    { time: 36.8, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 38, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 39.2, kind: "enemy", lane: "right", enemy: "walker" },
-    // —— 40–70 秒：混入冲刺体，约 40 秒后出现红门 -3 ——
+    // —— 40–70 秒：约 40 秒后出现成对红门 -3 / 蓝门 +3 ——
     { time: 40.5, kind: "gate", lane: "right", gate: "red", value: 3, label: "-3" },
     { time: 40.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-    { time: 44, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 45, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 46.1, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 47, kind: "enemy", lane: "right", enemy: "sprinter" },
     { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
     { time: 51, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-    { time: 52, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 53, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 54, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 55, kind: "enemy", lane: "right", enemy: "sprinter" },
     { time: 58, kind: "gate", lane: "left", gate: "red", value: 3, label: "-3" },
-    { time: 60, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 61, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 62, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 63.2, kind: "enemy", lane: "right", enemy: "sprinter" },
     { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
-    { time: 67, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
-    { time: 66, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 67, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 68.2, kind: "enemy", lane: "right", enemy: "walker" },
-    // —— 70–90 秒：不再出加人门，收束波 ——
-    { time: 72, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 72.9, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 73.8, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 74.7, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 75.6, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 76.5, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 80, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 80.8, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 81.6, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 82.4, kind: "enemy", lane: "right", enemy: "sprinter" },
-    { time: 83.2, kind: "enemy", lane: "right", enemy: "walker" },
-    { time: 84, kind: "enemy", lane: "right", enemy: "sprinter" }
+    { time: 67, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" }
   ];
-  var FINAL_WAVE_LAST_SPAWN = 84;
+  var RIGHT_LANE_GAPS = [[39.85, 41.15]];
+  function inRightLaneGap(time) {
+    return RIGHT_LANE_GAPS.some(([a, b]) => time >= a && time <= b);
+  }
+  function addEnemy(events, time, enemy) {
+    const t = Math.round(time * 100) / 100;
+    if (inRightLaneGap(t)) return;
+    events.push({ time: t, kind: "enemy", lane: "right", enemy });
+  }
+  function buildHorde() {
+    const events = [];
+    for (let t = 2; t <= 6; t += 1) addEnemy(events, t, "walker");
+    for (let t = 7.2; t < 20; t += 0.55) addEnemy(events, t, "walker");
+    for (let t = 20; t < 40; t += 0.4) addEnemy(events, t, "walker");
+    for (let t = 40; t < 70; t += 0.45) {
+      addEnemy(events, t, "walker");
+      addEnemy(events, t + 0.12, "sprinter");
+    }
+    for (let t = 70; t <= 87; t += 0.36) {
+      addEnemy(events, t, "walker");
+      addEnemy(events, t + 0.1, "sprinter");
+    }
+    return events;
+  }
+  var TIMELINE = [...GATE_EVENTS, ...buildHorde()].sort((a, b) => {
+    if (a.time !== b.time) return a.time - b.time;
+    if (a.kind === b.kind) return 0;
+    return a.kind === "gate" ? -1 : 1;
+  });
+  var enemyTimes = TIMELINE.filter((e) => e.kind === "enemy").map((e) => e.time);
+  var FINAL_WAVE_LAST_SPAWN = Math.max(...enemyTimes);
 
   // src/platform.ts
   function isWx() {
@@ -699,7 +679,8 @@
       const def = ENEMY[type];
       e.alive = true;
       e.type = type;
-      e.x = lane === "left" ? -LANE_X : LANE_X;
+      const slot = this.pool.size % 3;
+      e.x = (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
       e.y = 0;
       e.z = SPAWN_Z;
       e.hp = def.hp;
