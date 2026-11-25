@@ -11,11 +11,17 @@ import {
   GOLD_GATE_Z,
   GATE_CHARGE_CAP,
   WARNING_DAMAGE,
+  WARNING_FIRST,
   WARNING_TELEGRAPH,
+  RUSH_FIRST,
+  RUSH_TELEGRAPH,
   CAGE_REWARD,
   BARREL_CONTACT_LOSS,
   BARREL_AOE_DAMAGE,
   enemyHpMul,
+  rushPack,
+  rushPeriod,
+  warningPeriod,
 } from "../src/config";
 import { Game } from "../src/game";
 import { Squad } from "../src/squad";
@@ -133,11 +139,19 @@ console.log("1. 时间轴约束");
   const types = new Set(enemies.map((e) => e.enemy));
   assert(types.has("walker") && types.has("sprinter"), "时间轴包含游走体与冲刺体");
   assert(types.has("jumper") && types.has("shield") && types.has("bomber") && types.has("splitter"), "时间轴包含跳跃/盾兵/爆裂/分裂");
-  assert(enemies.some((e) => e.enemy === "jumper" && e.time >= 24 && e.time <= 27), "约 25 秒起出现跳跃体");
-  assert(enemies.some((e) => e.enemy === "shield" && e.time >= 40 && e.time <= 43), "约 40 秒起出现盾兵");
-  assert(enemies.some((e) => e.enemy === "bomber" && e.time >= 54 && e.time <= 57), "约 55 秒起出现爆裂体");
-  assert(enemies.some((e) => e.enemy === "splitter" && e.time >= 69 && e.time <= 72), "约 70 秒起出现分裂体");
+  assert(enemies.some((e) => e.enemy === "jumper" && e.time >= 15 && e.time <= 17), "约 16 秒起出现跳跃体");
+  assert(enemies.some((e) => e.enemy === "shield" && e.time >= 27 && e.time <= 29), "约 28 秒起出现盾兵");
+  assert(enemies.some((e) => e.enemy === "bomber" && e.time >= 37 && e.time <= 39), "约 38 秒起出现爆裂体");
+  assert(enemies.some((e) => e.enemy === "splitter" && e.time >= 49 && e.time <= 51), "约 50 秒起出现分裂体");
   assert(!enemies.some((e) => e.time < 10 && (e.enemy === "jumper" || e.enemy === "shield" || e.enemy === "bomber" || e.enemy === "splitter")), "新类型不出现在开局 10 秒");
+  const midHorde = enemies.filter((e) => e.time >= 20 && e.time < 40);
+  const lateHorde = enemies.filter((e) => e.time >= 40 && e.time < 70);
+  assert(midHorde.length >= 70, "20–40 秒出怪应明显加密，得到 " + midHorde.length);
+  assert(lateHorde.length >= 180, "40–70 秒出怪应成对加密，得到 " + lateHorde.length);
+  assert(enemies.filter((e) => e.enemy === "jumper" && e.time <= 70).length >= 20, "70 秒前跳跃体应更频繁");
+  assert(warningPeriod(WARNING_FIRST) <= 13.5, "红预警起始间隔应不宽于 13.5 秒");
+  assert(warningPeriod(120) <= 8, "后期红预警间隔应收紧到约 8 秒");
+  assert(warningPeriod(120) < warningPeriod(WARNING_FIRST), "红预警间隔应随时间收紧");
   assert(ENEMY.walker.hp === 3 && ENEMY.walker.speed === 1, "游走体生命 3、移速 1.0");
   assert(ENEMY.sprinter.hp === 2 && ENEMY.sprinter.speed === 1.7, "冲刺体生命 2、移速 1.7");
   assert(WEAPONS.pistol.damage === 1 && WEAPONS.pistol.rate === 4, "手枪伤害 1.0、约 4 发/秒");
@@ -514,7 +528,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   stay.input.targetX = -LANE_X;
   stay.squad.x = -LANE_X;
   // 推到预警即将出现，清掉干扰
-  stay.step(34.9);
+  stay.step(WARNING_FIRST - 0.1);
   stay.enemies.clear();
   stay.props.clear();
   stay.gates.clear();
@@ -523,7 +537,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   stay.input.targetX = -LANE_X;
   stay.step(0.2);
   const w = stay.getState().warning;
-  assert(!!w, "约 35 秒应出现红预警");
+  assert(!!w, "约 " + WARNING_FIRST + " 秒应出现红预警");
   assertEq(w && w.lane, "left", "预警应打在小队当前所在的左道");
   stay.enemies.clear();
   stay.props.clear();
@@ -547,7 +561,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   dodge.squad.setCount(20);
   dodge.input.targetX = -LANE_X;
   dodge.squad.x = -LANE_X;
-  dodge.step(34.9);
+  dodge.step(WARNING_FIRST - 0.1);
   dodge.enemies.clear();
   dodge.props.clear();
   dodge.gates.clear();
@@ -629,8 +643,10 @@ console.log("13. 人质笼与油桶取舍");
 console.log("14. 存活越久，感染体越肉");
 {
   const m20 = enemyHpMul(20);
+  const m60 = enemyHpMul(60);
   const m120 = enemyHpMul(120);
   assert(m20 >= 1, "教学刚结束后血量倍率至少为 1，得到 " + m20);
+  assert(m60 >= 1.9, "t=60 的血量倍率应已接近翻倍，得到 " + m60.toFixed(3));
   assert(m120 > m20 * 1.5, "t=120 的血量倍率应明显高于 t=20（" + m120.toFixed(3) + " vs " + m20.toFixed(3) + "）");
   const g = new Game(mockPlatform());
   g.beginRun();
@@ -640,6 +656,74 @@ console.log("14. 存活越久，感染体越肉");
   assert(!!a && !!b && !!c, "可按倍率生成感染体");
   assert(b!.maxHp > a!.maxHp * 1.5, "游走体 t=120 的生命明显高于 t=20（" + b!.maxHp + " vs " + a!.maxHp + "）");
   assert(c!.maxHp > a!.maxHp, "新类型同样吃存活加血倍率");
+}
+
+console.log("15. 左道来袭：可读压力事件，教学段不出现");
+{
+  const early = new Game(mockPlatform());
+  early.beginRun();
+  early.step(9.5);
+  assert(!early.getState().rush, "教学段 10 秒内不应出现左道来袭");
+  assert(early.enemies.pool.active.every((e) => e.x >= 0), "教学段感染体仍只出现在右道");
+
+  assert(rushPeriod(RUSH_FIRST) <= 16.5, "左道来袭起始间隔应不宽于 16.5 秒");
+  assert(rushPeriod(120) < rushPeriod(RUSH_FIRST), "左道来袭间隔应随时间收紧");
+  assert(rushPack(40).length >= 3 && rushPack(40).every((id) => id === "walker" || id === "sprinter"), "中期来袭是游走体和冲刺体小队");
+  assert(rushPack(65).includes("jumper"), "60 秒后来袭应混入跳跃体");
+  assert(rushPack(85).includes("bomber"), "80 秒后来袭应混入爆裂体");
+
+  const g = new Game(mockPlatform());
+  g.beginRun();
+  g.squad.setCount(20);
+  g.input.targetX = -LANE_X;
+  g.squad.x = -LANE_X;
+  g.step(RUSH_FIRST - 0.1);
+  g.enemies.clear();
+  g.props.clear();
+  g.gates.clear();
+  g.squad.setCount(20);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  g.step(0.2);
+  const rush = g.getState().rush;
+  assert(!!rush, "约 " + RUSH_FIRST + " 秒应出现左道来袭提示");
+  assert(rush && rush.spawned === false, "提示出现时感染体尚未放出");
+
+  g.enemies.clear();
+  g.props.clear();
+  g.gates.clear();
+  g.bullets.clear();
+  const slices = Math.ceil((RUSH_TELEGRAPH + 0.08) / (1 / 60));
+  for (let i = 0; i < slices; i++) {
+    // 预告期间清掉右道时间轴和已在飞的子弹，避免来袭体刚放出就被射掉
+    if (!g.rushSpawned) {
+      g.enemies.clear();
+      g.props.clear();
+      g.gates.clear();
+    }
+    g.bullets.clear();
+    g.step(1 / 60);
+  }
+  const leftPack = g.enemies.pool.active.filter((e) => e.x < 0);
+  assert(leftPack.length >= 2, "预告结束后左道应放出至少 2 只感染体，得到 " + leftPack.length);
+  assert(g.getState().rush && g.getState().rush!.spawned, "放出后提示应标记为已生成");
+
+  // 不射击时，来袭体能碰到蹲在左道的小队
+  const hit = new Game(mockPlatform());
+  hit.beginRun();
+  hit.squad.setCount(12);
+  hit.squad.x = -LANE_X;
+  hit.input.targetX = -LANE_X;
+  hit.enemies.clear();
+  hit.props.clear();
+  hit.gates.clear();
+  const arrived = hit.enemies.spawn("walker", "left", { z: 14.2, x: -LANE_X });
+  assert(!!arrived, "可在左道近处置入来袭体");
+  hit.squad.iframes = 0;
+  hit.bullets.clear();
+  const before = hit.squad.count;
+  hit.step(0.2);
+  assert(hit.squad.count < before, "蹲在左道且不处理来袭体应掉人，人数 " + hit.squad.count + " / 原 " + before);
 }
 
 console.log("");

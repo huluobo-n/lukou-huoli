@@ -134,24 +134,40 @@ export const GOLD_NEAR_MUL = 0.5;
 
 /** 教学结束后，存活越久敌人越肉 */
 export const HP_SCALE_START = 10;
-export const HP_SCALE_PER_SEC = 0.012;
+export const HP_SCALE_PER_SEC = 0.02;
 
 export function enemyHpMul(t: number): number {
   if (t <= HP_SCALE_START) return 1;
   return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
 }
 
-/** 红预警：先约 35 秒出现，之后间隔逐渐收紧 */
-export const WARNING_FIRST = 35;
-export const WARNING_TELEGRAPH = 1.35;
-export const WARNING_DAMAGE = 5;
+/** 红预警：先约 28 秒出现，之后间隔明显收紧 */
+export const WARNING_FIRST = 28;
+export const WARNING_TELEGRAPH = 1.2;
+export const WARNING_DAMAGE = 7;
 
 export function warningPeriod(t: number): number {
-  return Math.max(14, 20.5 - Math.max(0, t - WARNING_FIRST) * 0.04);
+  return Math.max(8, 13.5 - Math.max(0, t - WARNING_FIRST) * 0.06);
+}
+
+/** 左道来袭：教学结束后的可读压力事件，惩罚一直蹲左道 */
+export const RUSH_FIRST = 36;
+export const RUSH_TELEGRAPH = 1.2;
+export const RUSH_SPAWN_Z = 42;
+export const RUSH_BANNER = 2.4;
+
+export function rushPeriod(t: number): number {
+  return Math.max(10, 16.5 - Math.max(0, t - RUSH_FIRST) * 0.05);
+}
+
+export function rushPack(t: number): EnemyId[] {
+  if (t >= 80) return ["bomber", "jumper", "sprinter"];
+  if (t >= 60) return ["jumper", "walker", "sprinter"];
+  return ["walker", "walker", "sprinter"];
 }
 
 export const CAGE_HP = 8;
-export const CAGE_REWARD = 4;
+export const CAGE_REWARD = 3;
 export const BARREL_HP = 3;
 export const BARREL_AOE_RADIUS = 3.4;
 export const BARREL_AOE_DAMAGE = 8;
@@ -194,17 +210,17 @@ const GATE_EVENTS: TimelineEvent[] = [
   { time: 11.5, kind: "gate", lane: "left", gate: "add", value: 2, label: "+2" },
   { time: 16.0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
   { time: 22.0, kind: "gate", lane: "left", gate: "mul", value: 2, label: "×2" },
-  { time: 27.0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+  { time: 27.0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 32.8, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-  { time: 36.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+  { time: 36.5, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
 
   // —— 40–70 秒：约 40 秒后出现成对红门 -3 / 蓝门 +3 ——
   { time: 40.5, kind: "gate", lane: "right", gate: "red", value: 3, label: "-3" },
   { time: 40.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
-  { time: 51.0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+  { time: 51.0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 58.0, kind: "gate", lane: "left", gate: "red", value: 3, label: "-3" },
-  { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+  { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 67.0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
 ];
 
@@ -241,29 +257,32 @@ function buildHorde(): TimelineEvent[] {
   // 开局 2–6 秒 5 只游走体，1 人手枪可清掉
   for (let t = 2; t <= 6; t += 1) addEnemy(events, t, "walker");
 
-  // 教学刚结束即接上，不再留空档
-  for (let t = 7.2; t < 20; t += 0.55) addEnemy(events, t, "walker");
+  // 教学刚结束即接上，不再留空档；前 20 秒只略加密，保证教学可过
+  for (let t = 7.2; t < 20; t += 0.5) addEnemy(events, t, "walker");
 
-  // 20–40 秒加密游走体
-  for (let t = 20; t < 40; t += 0.4) addEnemy(events, t, "walker");
-
-  // 40–70 秒：游走体与冲刺体成对涌来
-  for (let t = 40; t < 70; t += 0.45) {
+  // 20–40 秒加密，后半段开始夹冲刺体
+  for (let t = 20; t < 40; t += 0.32) {
     addEnemy(events, t, "walker");
-    addEnemy(events, t + 0.12, "sprinter");
+    if (t >= 28) addEnemy(events, t + 0.1, "sprinter");
   }
 
-  // 70 秒后脚本段继续加密，之后由对局逻辑无限出怪
-  for (let t = 70; t <= 87; t += 0.36) {
+  // 40–70 秒：游走体与冲刺体成对更密地涌来
+  for (let t = 40; t < 70; t += 0.34) {
     addEnemy(events, t, "walker");
     addEnemy(events, t + 0.1, "sprinter");
   }
 
-  // 新类型在教学段之后逐步登场，不挤在开局 10 秒
-  for (let t = 25; t < 70; t += 3.2) addEnemy(events, t, "jumper");
-  for (let t = 41.3; t < 70; t += 4.0) addEnemy(events, t, "shield");
-  for (let t = 55; t < 70; t += 5.0) addEnemy(events, t, "bomber");
-  for (let t = 70; t <= 87; t += 3.6) addEnemy(events, t, "splitter");
+  // 70 秒后脚本段继续加密，之后由对局逻辑无限出怪
+  for (let t = 70; t <= 87; t += 0.26) {
+    addEnemy(events, t, "walker");
+    addEnemy(events, t + 0.08, "sprinter");
+  }
+
+  // 新类型在教学段之后更早、更密地登场，不挤在开局 10 秒
+  for (let t = 16.0; t <= 87; t += 2.2) addEnemy(events, t, "jumper");
+  for (let t = 28.0; t <= 87; t += 2.8) addEnemy(events, t, "shield");
+  for (let t = 38.0; t <= 87; t += 3.4) addEnemy(events, t, "bomber");
+  for (let t = 50.0; t <= 87; t += 2.8) addEnemy(events, t, "splitter");
   return events;
 }
 
@@ -279,32 +298,35 @@ export const SCRIPT_ENEMY_END = Math.max(...enemyTimes);
 
 /** 无尽段开始补门的时间、间隔，以及循环内容 */
 export const ENDLESS_GATE_START = 75;
-export const ENDLESS_GATE_PERIOD = 8;
+export const ENDLESS_GATE_PERIOD = 10;
 
 export const ENDLESS_GATE_CYCLE: TimelineEvent[] = [
   { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
+  { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-  { time: 0, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
-  { time: 0, kind: "gate", lane: "left", gate: "mul", value: 2, label: "×2" },
   { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
 ];
 
-/** 无尽段成对出怪的间隔，随时间缓慢加密，最短 0.22 秒 */
+/** 无尽段成对出怪的间隔，随时间继续加密，最短 0.16 秒 */
 export function endlessHordeInterval(t: number): number {
-  return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 0.0012);
+  return Math.max(0.16, 0.26 - Math.max(0, t - 70) * 0.0018);
 }
 
-/** 无尽段轮换出怪，含全部新类型 */
+/** 无尽段轮换出怪，特殊体占比更高 */
 export const ENDLESS_MIX: EnemyId[] = [
   "walker",
   "sprinter",
   "jumper",
   "shield",
-  "walker",
   "sprinter",
   "bomber",
   "splitter",
+  "jumper",
+  "walker",
+  "sprinter",
+  "shield",
+  "bomber",
 ];
 
 /** 人质笼与油桶：教学结束后少量出现，不淹没既有奖励门 */
@@ -318,7 +340,7 @@ export const PROP_EVENTS: PropEvent[] = [
 ];
 
 export const ENDLESS_PROP_START = 76;
-export const ENDLESS_PROP_PERIOD = 16;
+export const ENDLESS_PROP_PERIOD = 18;
 
 export function formatGateLabel(kind: "add" | "red", signed: number): string {
   if (kind === "red" || signed < 0) return String(signed);

@@ -396,6 +396,7 @@ export function drawLaneWarning(
   lane: "left" | "right",
   camX: number,
   timeLeft: number,
+  kind: "warn" | "rush" = "warn",
 ): void {
   const x = lane === "left" ? -LANE_X : LANE_X;
   const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
@@ -403,8 +404,11 @@ export function drawLaneWarning(
   const nearL = pr(x - 2.4, 0, 10, camX);
   const nearR = pr(x + 2.4, 0, 10, camX);
   const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
+  const alpha = Math.max(0.12, Math.min(0.42, pulse));
   ctx.save();
-  ctx.fillStyle = `rgba(210, 48, 40, ${Math.max(0.12, Math.min(0.42, pulse))})`;
+  ctx.fillStyle = kind === "rush"
+    ? `rgba(210, 128, 32, ${alpha})`
+    : `rgba(210, 48, 40, ${alpha})`;
   ctx.beginPath();
   ctx.moveTo(farL.sx, farL.sy);
   ctx.lineTo(farR.sx, farR.sy);
@@ -641,6 +645,7 @@ export interface HudInfo {
   muted: boolean;
   hint: boolean;
   warning?: { lane: "left" | "right"; timeLeft: number } | null;
+  rush?: { timeLeft: number; spawned: boolean } | null;
 }
 
 export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
@@ -717,6 +722,14 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("躲开！", CANVAS_W / 2, 194);
+  } else if (hud.rush) {
+    const pulse = 0.72 + Math.sin((hud.rush.timeLeft + 0.3) * 16) * 0.16;
+    pill(ctx, 130, 150, CANVAS_W - 260, 84, `rgba(196,110,24,${pulse})`);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = 'bold 40px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("左道来袭！", CANVAS_W / 2, 194);
   }
 }
 

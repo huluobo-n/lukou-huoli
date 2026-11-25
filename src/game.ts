@@ -17,6 +17,10 @@ import {
   LANE_HALF,
   LANE_X,
   PROP_EVENTS,
+  RUSH_BANNER,
+  RUSH_FIRST,
+  RUSH_SPAWN_Z,
+  RUSH_TELEGRAPH,
   SCRIPT_ENEMY_END,
   TEAM_Z,
   TIMELINE,
@@ -29,6 +33,8 @@ import {
   inRightLaneGap,
   laneCenterX,
   laneOfX,
+  rushPack,
+  rushPeriod,
   warningPeriod,
   type EnemyId,
   type TimelineEvent,
@@ -81,6 +87,7 @@ export interface PublicState {
   bullets: number;
   remain: number;
   warning: { lane: "left" | "right"; timeLeft: number } | null;
+  rush: { timeLeft: number; spawned: boolean } | null;
   props: { kind: string; lane: string; z: number; hp: number }[];
 }
 
@@ -116,6 +123,11 @@ export class Game {
   warningLane: "left" | "right" | null = null;
   warningImpactAt = 0;
   private nextWarningAt = 0;
+  rushActive = false;
+  rushSpawnAt = 0;
+  rushUntil = 0;
+  rushSpawned = false;
+  private nextRushAt = 0;
   paused = false;
   private running = false;
   private lastTs = 0;
@@ -192,6 +204,9 @@ export class Game {
       warning: this.warningLane
         ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) }
         : null,
+      rush: this.rushActive
+        ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned }
+        : null,
       props: this.props.pool.active.map((p) => ({
         kind: p.kind,
         lane: p.lane,
@@ -222,6 +237,11 @@ export class Game {
     this.warningLane = null;
     this.warningImpactAt = 0;
     this.nextWarningAt = WARNING_FIRST;
+    this.rushActive = false;
+    this.rushSpawnAt = 0;
+    this.rushUntil = 0;
+    this.rushSpawned = false;
+    this.nextRushAt = RUSH_FIRST;
     this.spawned.length = 0;
     this.squad.reset();
     this.enemies.clear();
@@ -255,6 +275,7 @@ export class Game {
     this.spawnGoldGate();
     this.spawnPropsDue();
     this.updateWarning();
+    this.updateRush();
     this.gates.update(dt);
     this.props.update(dt);
     this.enemies.update(dt);
@@ -383,9 +404,59 @@ export class Game {
       }
       return;
     }
-    if (this.time >= this.nextWarningAt && this.squad.count > 0) {
+    if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive) {
       this.warningLane = laneOfX(this.squad.x);
       this.warningImpactAt = this.time + WARNING_TELEGRAPH;
+    }
+  }
+
+  private scheduleNextRush(fromTime: number): void {
+    let t = fromTime + rushPeriod(fromTime);
+    for (let i = 0; i < 6; i++) {
+      const spawnAt = t + RUSH_TELEGRAPH;
+      const warnHit = this.nextWarningAt;
+      const overlapsWarn =
+        (warnHit > 0 && Math.abs(spawnAt - warnHit) < 2.4) ||
+        (warnHit > 0 && Math.abs(t - warnHit) < 2.4) ||
+        (this.warningImpactAt > 0 && Math.abs(t - (this.warningImpactAt - WARNING_TELEGRAPH)) < 2.4);
+      if (inRightLaneGap(t) || inRightLaneGap(spawnAt) || overlapsWarn) {
+        t += 2;
+        continue;
+      }
+      break;
+    }
+    this.nextRushAt = t;
+  }
+
+  private updateRush(): void {
+    if (this.rushActive) {
+      if (!this.rushSpawned && this.time >= this.rushSpawnAt) {
+        const pack = rushPack(this.time);
+        for (let i = 0; i < pack.length; i++) {
+          this.spawnEnemy(pack[i], "left", {
+            z: RUSH_SPAWN_Z - i * 1.35,
+            x: -LANE_X + (i - 1) * 0.55,
+          });
+        }
+        this.rushSpawned = true;
+      }
+      if (this.time >= this.rushUntil) {
+        this.rushActive = false;
+        this.rushSpawned = false;
+        this.scheduleNextRush(this.time);
+      }
+      return;
+    }
+    if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane) {
+      // 避开即将打出的红预警，两种提示不要叠在一起
+      if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
+        this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
+        return;
+      }
+      this.rushActive = true;
+      this.rushSpawned = false;
+      this.rushSpawnAt = this.time + RUSH_TELEGRAPH;
+      this.rushUntil = this.time + RUSH_BANNER;
     }
   }
 
@@ -713,6 +784,11 @@ export class Game {
         z: 28,
         draw: () => drawLaneWarning(ctx, this.warningLane!, camX, this.warningImpactAt - this.time),
       });
+    } else if (this.rushActive && this.state === "playing") {
+      items.push({
+        z: 28,
+        draw: () => drawLaneWarning(ctx, "left", camX, this.rushSpawnAt - this.time, "rush"),
+      });
     }
     for (const g of this.gates.pool.active) {
       items.push({ z: g.z, draw: () => drawGate(ctx, g, camX) });
@@ -747,6 +823,9 @@ export class Game {
         hint: this.hint,
         warning: this.warningLane
           ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) }
+          : null,
+        rush: this.rushActive
+          ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned }
           : null,
       });
     } else if (this.state === "title") {

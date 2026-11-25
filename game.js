@@ -118,19 +118,31 @@
   var GOLD_AMP_MUL = 2;
   var GOLD_NEAR_MUL = 0.5;
   var HP_SCALE_START = 10;
-  var HP_SCALE_PER_SEC = 0.012;
+  var HP_SCALE_PER_SEC = 0.02;
   function enemyHpMul(t) {
     if (t <= HP_SCALE_START) return 1;
     return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
   }
-  var WARNING_FIRST = 35;
-  var WARNING_TELEGRAPH = 1.35;
-  var WARNING_DAMAGE = 5;
+  var WARNING_FIRST = 28;
+  var WARNING_TELEGRAPH = 1.2;
+  var WARNING_DAMAGE = 7;
   function warningPeriod(t) {
-    return Math.max(14, 20.5 - Math.max(0, t - WARNING_FIRST) * 0.04);
+    return Math.max(8, 13.5 - Math.max(0, t - WARNING_FIRST) * 0.06);
+  }
+  var RUSH_FIRST = 36;
+  var RUSH_TELEGRAPH = 1.2;
+  var RUSH_SPAWN_Z = 42;
+  var RUSH_BANNER = 2.4;
+  function rushPeriod(t) {
+    return Math.max(10, 16.5 - Math.max(0, t - RUSH_FIRST) * 0.05);
+  }
+  function rushPack(t) {
+    if (t >= 80) return ["bomber", "jumper", "sprinter"];
+    if (t >= 60) return ["jumper", "walker", "sprinter"];
+    return ["walker", "walker", "sprinter"];
   }
   var CAGE_HP = 8;
-  var CAGE_REWARD = 4;
+  var CAGE_REWARD = 3;
   var BARREL_HP = 3;
   var BARREL_AOE_RADIUS = 3.4;
   var BARREL_AOE_DAMAGE = 8;
@@ -143,16 +155,16 @@
     { time: 11.5, kind: "gate", lane: "left", gate: "add", value: 2, label: "+2" },
     { time: 16, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
     { time: 22, kind: "gate", lane: "left", gate: "mul", value: 2, label: "\xD72" },
-    { time: 27, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+    { time: 27, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 32.8, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-    { time: 36.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+    { time: 36.5, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
     // —— 40–70 秒：约 40 秒后出现成对红门 -3 / 蓝门 +3 ——
     { time: 40.5, kind: "gate", lane: "right", gate: "red", value: 3, label: "-3" },
     { time: 40.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
-    { time: 51, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
+    { time: 51, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 58, kind: "gate", lane: "left", gate: "red", value: 3, label: "-3" },
-    { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
+    { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 67, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" }
   ];
   var RIGHT_LANE_GAPS = [[39.85, 41.15]];
@@ -177,20 +189,23 @@
   function buildHorde() {
     const events = [];
     for (let t = 2; t <= 6; t += 1) addEnemy(events, t, "walker");
-    for (let t = 7.2; t < 20; t += 0.55) addEnemy(events, t, "walker");
-    for (let t = 20; t < 40; t += 0.4) addEnemy(events, t, "walker");
-    for (let t = 40; t < 70; t += 0.45) {
+    for (let t = 7.2; t < 20; t += 0.5) addEnemy(events, t, "walker");
+    for (let t = 20; t < 40; t += 0.32) {
       addEnemy(events, t, "walker");
-      addEnemy(events, t + 0.12, "sprinter");
+      if (t >= 28) addEnemy(events, t + 0.1, "sprinter");
     }
-    for (let t = 70; t <= 87; t += 0.36) {
+    for (let t = 40; t < 70; t += 0.34) {
       addEnemy(events, t, "walker");
       addEnemy(events, t + 0.1, "sprinter");
     }
-    for (let t = 25; t < 70; t += 3.2) addEnemy(events, t, "jumper");
-    for (let t = 41.3; t < 70; t += 4) addEnemy(events, t, "shield");
-    for (let t = 55; t < 70; t += 5) addEnemy(events, t, "bomber");
-    for (let t = 70; t <= 87; t += 3.6) addEnemy(events, t, "splitter");
+    for (let t = 70; t <= 87; t += 0.26) {
+      addEnemy(events, t, "walker");
+      addEnemy(events, t + 0.08, "sprinter");
+    }
+    for (let t = 16; t <= 87; t += 2.2) addEnemy(events, t, "jumper");
+    for (let t = 28; t <= 87; t += 2.8) addEnemy(events, t, "shield");
+    for (let t = 38; t <= 87; t += 3.4) addEnemy(events, t, "bomber");
+    for (let t = 50; t <= 87; t += 2.8) addEnemy(events, t, "splitter");
     return events;
   }
   var TIMELINE = [...GATE_EVENTS, ...buildHorde()].sort((a, b) => {
@@ -201,27 +216,30 @@
   var enemyTimes = TIMELINE.filter((e) => e.kind === "enemy").map((e) => e.time);
   var SCRIPT_ENEMY_END = Math.max(...enemyTimes);
   var ENDLESS_GATE_START = 75;
-  var ENDLESS_GATE_PERIOD = 8;
+  var ENDLESS_GATE_PERIOD = 10;
   var ENDLESS_GATE_CYCLE = [
     { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
+    { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-    { time: 0, kind: "gate", lane: "left", gate: "add", value: 8, label: "+8" },
-    { time: 0, kind: "gate", lane: "left", gate: "mul", value: 2, label: "\xD72" },
     { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" }
   ];
   function endlessHordeInterval(t) {
-    return Math.max(0.22, 0.36 - Math.max(0, t - 70) * 12e-4);
+    return Math.max(0.16, 0.26 - Math.max(0, t - 70) * 18e-4);
   }
   var ENDLESS_MIX = [
     "walker",
     "sprinter",
     "jumper",
     "shield",
-    "walker",
     "sprinter",
     "bomber",
-    "splitter"
+    "splitter",
+    "jumper",
+    "walker",
+    "sprinter",
+    "shield",
+    "bomber"
   ];
   var PROP_EVENTS = [
     { time: 18.5, kind: "cage", lane: "left" },
@@ -232,7 +250,7 @@
     { time: 60.8, kind: "barrel", lane: "right" }
   ];
   var ENDLESS_PROP_START = 76;
-  var ENDLESS_PROP_PERIOD = 16;
+  var ENDLESS_PROP_PERIOD = 18;
   function formatGateLabel(kind, signed) {
     if (kind === "red" || signed < 0) return String(signed);
     if (signed === 0) return "0";
@@ -1542,15 +1560,16 @@
     ctx.arc(0, sprint ? -52 * k : -56 * k, sprint ? 13 * k : 16 * k, 0, Math.PI * 2);
     ctx.fill();
   }
-  function drawLaneWarning(ctx, lane, camX, timeLeft) {
+  function drawLaneWarning(ctx, lane, camX, timeLeft, kind = "warn") {
     const x = lane === "left" ? -LANE_X : LANE_X;
     const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
     const farR = pr(x + 2.4, 0, SPAWN_Z - 4, camX);
     const nearL = pr(x - 2.4, 0, 10, camX);
     const nearR = pr(x + 2.4, 0, 10, camX);
     const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
+    const alpha = Math.max(0.12, Math.min(0.42, pulse));
     ctx.save();
-    ctx.fillStyle = `rgba(210, 48, 40, ${Math.max(0.12, Math.min(0.42, pulse))})`;
+    ctx.fillStyle = kind === "rush" ? `rgba(210, 128, 32, ${alpha})` : `rgba(210, 48, 40, ${alpha})`;
     ctx.beginPath();
     ctx.moveTo(farL.sx, farL.sy);
     ctx.lineTo(farR.sx, farR.sy);
@@ -1806,6 +1825,14 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("\u8EB2\u5F00\uFF01", CANVAS_W / 2, 194);
+    } else if (hud.rush) {
+      const pulse = 0.72 + Math.sin((hud.rush.timeLeft + 0.3) * 16) * 0.16;
+      pill(ctx, 130, 150, CANVAS_W - 260, 84, `rgba(196,110,24,${pulse})`);
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = 'bold 40px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("\u5DE6\u9053\u6765\u88AD\uFF01", CANVAS_W / 2, 194);
     }
   }
   function pill(ctx, x, y, w, h, color) {
@@ -2168,6 +2195,11 @@
       this.warningLane = null;
       this.warningImpactAt = 0;
       this.nextWarningAt = 0;
+      this.rushActive = false;
+      this.rushSpawnAt = 0;
+      this.rushUntil = 0;
+      this.rushSpawned = false;
+      this.nextRushAt = 0;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2237,6 +2269,7 @@
         bullets: this.bullets.pool.size,
         remain: this.time,
         warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null,
+        rush: this.rushActive ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned } : null,
         props: this.props.pool.active.map((p) => ({
           kind: p.kind,
           lane: p.lane,
@@ -2266,6 +2299,11 @@
       this.warningLane = null;
       this.warningImpactAt = 0;
       this.nextWarningAt = WARNING_FIRST;
+      this.rushActive = false;
+      this.rushSpawnAt = 0;
+      this.rushUntil = 0;
+      this.rushSpawned = false;
+      this.nextRushAt = RUSH_FIRST;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -2295,6 +2333,7 @@
       this.spawnGoldGate();
       this.spawnPropsDue();
       this.updateWarning();
+      this.updateRush();
       this.gates.update(dt);
       this.props.update(dt);
       this.enemies.update(dt);
@@ -2414,9 +2453,53 @@
         }
         return;
       }
-      if (this.time >= this.nextWarningAt && this.squad.count > 0) {
+      if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive) {
         this.warningLane = laneOfX(this.squad.x);
         this.warningImpactAt = this.time + WARNING_TELEGRAPH;
+      }
+    }
+    scheduleNextRush(fromTime) {
+      let t = fromTime + rushPeriod(fromTime);
+      for (let i = 0; i < 6; i++) {
+        const spawnAt = t + RUSH_TELEGRAPH;
+        const warnHit = this.nextWarningAt;
+        const overlapsWarn = warnHit > 0 && Math.abs(spawnAt - warnHit) < 2.4 || warnHit > 0 && Math.abs(t - warnHit) < 2.4 || this.warningImpactAt > 0 && Math.abs(t - (this.warningImpactAt - WARNING_TELEGRAPH)) < 2.4;
+        if (inRightLaneGap(t) || inRightLaneGap(spawnAt) || overlapsWarn) {
+          t += 2;
+          continue;
+        }
+        break;
+      }
+      this.nextRushAt = t;
+    }
+    updateRush() {
+      if (this.rushActive) {
+        if (!this.rushSpawned && this.time >= this.rushSpawnAt) {
+          const pack = rushPack(this.time);
+          for (let i = 0; i < pack.length; i++) {
+            this.spawnEnemy(pack[i], "left", {
+              z: RUSH_SPAWN_Z - i * 1.35,
+              x: -LANE_X + (i - 1) * 0.55
+            });
+          }
+          this.rushSpawned = true;
+        }
+        if (this.time >= this.rushUntil) {
+          this.rushActive = false;
+          this.rushSpawned = false;
+          this.scheduleNextRush(this.time);
+        }
+        return;
+      }
+      if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane) {
+        if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
+          this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
+          return;
+        }
+        this.rushActive = true;
+        this.rushSpawned = false;
+        this.rushSpawnAt = this.time + RUSH_TELEGRAPH;
+        this.rushUntil = this.time + RUSH_BANNER;
       }
     }
     applyEvent(ev) {
@@ -2715,6 +2798,11 @@
           z: 28,
           draw: () => drawLaneWarning(ctx, this.warningLane, camX, this.warningImpactAt - this.time)
         });
+      } else if (this.rushActive && this.state === "playing") {
+        items.push({
+          z: 28,
+          draw: () => drawLaneWarning(ctx, "left", camX, this.rushSpawnAt - this.time, "rush")
+        });
       }
       for (const g of this.gates.pool.active) {
         items.push({ z: g.z, draw: () => drawGate(ctx, g, camX) });
@@ -2746,7 +2834,8 @@
           fireBonus: this.squad.fireBonus,
           muted: this.audio.muted,
           hint: this.hint,
-          warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null
+          warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null,
+          rush: this.rushActive ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned } : null
         });
       } else if (this.state === "title") {
         drawTitle(ctx, this.best, this.audio.muted);
