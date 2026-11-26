@@ -149,7 +149,12 @@ export const HP_SCALE_LATE_PER_SEC = 0.012;
 export function enemyHpMul(t: number): number {
   if (t <= HP_SCALE_START) return 1;
   let mul = 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
-  if (t > HP_SCALE_LATE_START) mul += (t - HP_SCALE_LATE_START) * HP_SCALE_LATE_PER_SEC;
+  // 入夜到岔路口前放缓变肉，好让人能打到「守住中道」
+  if (t > HP_SCALE_LATE_START && t < HOLD_FIRST) {
+    mul += (t - HP_SCALE_LATE_START) * 0.005;
+  } else if (t >= HOLD_FIRST) {
+    mul += (HOLD_FIRST - HP_SCALE_LATE_START) * 0.005 + (t - HOLD_FIRST) * HP_SCALE_LATE_PER_SEC;
+  }
   return mul;
 }
 
@@ -203,8 +208,8 @@ export const GOLD_WINDOW_LIFE = 10;
 export const GOLD_WINDOW_LULL = 4.8;
 export const GOLD_WINDOW_SAFE = 6.5;
 export const GOLD_WINDOW_Z = 32;
-export const GOLD_WINDOW_BASE = [58, 108, 172];
-export const GOLD_CLOSE_BANNER = 1.6;
+export const GOLD_WINDOW_BASE = [74, 112, 176];
+export const GOLD_CLOSE_BANNER = 2.0;
 
 /** 第一次左道来袭后的安静重整，再进入具名事件 */
 export const RUSH_QUIET = 5.2;
@@ -234,7 +239,11 @@ export const LATE_REFILL_LOW = 2;
 export const LATE_REFILL_LOW_COUNT = 6;
 
 /** 守住中道结束后进入雨夜推进，避免夜路口循环贯穿整段后期 */
-export const STORM_DELAY = 8;
+export const STORM_DELAY = 12;
+export const EVENT_GAP = 7;
+export const OPENING_END = 16;
+export const NIGHT_HEAVY_LOCK = 50;
+export const GOLD_WARN_SETTLE = 3.5;
 export const STORM_BANNER = 2.8;
 export const STORM_PERIOD = 34;
 export const STORM_TELEGRAPH = 1.3;
@@ -277,8 +286,10 @@ export type SceneId = "day" | "night" | "fork" | "storm";
 
 export function alleySide(index: number, seed: number): AlleySide {
   const x = Math.imul(seed ^ ((91 + index) * 0x9e3779b9), 0x85ebca6b) >>> 0;
-  const r = x % 3;
-  return r === 0 ? "left" : r === 1 ? "right" : "both";
+  // 多数为单侧，偶尔左右同时，避免刚躲开就被两侧夹死
+  const r = x % 6;
+  if (r === 0) return "both";
+  return r % 2 === 0 ? "left" : "right";
 }
 
 export function alleyBannerText(side: AlleySide): string {
@@ -298,7 +309,8 @@ export function softenGate(ev: TimelineEvent, time: number, count: number, peak:
   if (count >= MAX_SQUAD) {
     return { ...ev, gate: "shield", value: undefined, weapon: undefined, label: "护盾" };
   }
-  if (time >= SCENE_SHIFT_AT) {
+  // 教学结束后，不满编只小幅补人，白天也不能再出现一扇 +15 补满
+  if (time >= OPENING_END) {
     const v = lateRefillAmount(count);
     return { ...ev, gate: "add", value: v, weapon: undefined, label: "+" + v };
   }
@@ -461,7 +473,11 @@ export function endlessGateFor(index: number, seed: number): TimelineEvent {
 
 /** 无尽段成对出怪的间隔，后期继续加密，最短 0.14 秒 */
 export function endlessHordeInterval(t: number): number {
-  return Math.max(0.14, 0.24 - Math.max(0, t - 70) * 0.002);
+  // 入夜到 2:30 前降低密度，岔路口后再加密
+  if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST) {
+    return Math.max(0.30, 0.40 - Math.max(0, t - 70) * 0.001);
+  }
+  return Math.max(0.16, 0.26 - Math.max(0, t - HOLD_FIRST) * 0.002);
 }
 
 /** 无尽段轮换出怪，特殊体占比更高 */

@@ -131,7 +131,11 @@
   function enemyHpMul(t) {
     if (t <= HP_SCALE_START) return 1;
     let mul = 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
-    if (t > HP_SCALE_LATE_START) mul += (t - HP_SCALE_LATE_START) * HP_SCALE_LATE_PER_SEC;
+    if (t > HP_SCALE_LATE_START && t < HOLD_FIRST) {
+      mul += (t - HP_SCALE_LATE_START) * 5e-3;
+    } else if (t >= HOLD_FIRST) {
+      mul += (HOLD_FIRST - HP_SCALE_LATE_START) * 5e-3 + (t - HOLD_FIRST) * HP_SCALE_LATE_PER_SEC;
+    }
     return mul;
   }
   var WARNING_FIRST = 28;
@@ -169,8 +173,8 @@
   var GOLD_WINDOW_LIFE = 10;
   var GOLD_WINDOW_LULL = 4.8;
   var GOLD_WINDOW_Z = 32;
-  var GOLD_WINDOW_BASE = [58, 108, 172];
-  var GOLD_CLOSE_BANNER = 1.6;
+  var GOLD_WINDOW_BASE = [74, 112, 176];
+  var GOLD_CLOSE_BANNER = 2;
   var RUSH_QUIET = 5.2;
   var PINCER_FIRST = 52;
   var PINCER_TELEGRAPH = 1.25;
@@ -192,7 +196,11 @@
   var LATE_REFILL = 1;
   var LATE_REFILL_LOW = 2;
   var LATE_REFILL_LOW_COUNT = 6;
-  var STORM_DELAY = 8;
+  var STORM_DELAY = 12;
+  var EVENT_GAP = 7;
+  var OPENING_END = 16;
+  var NIGHT_HEAVY_LOCK = 50;
+  var GOLD_WARN_SETTLE = 3.5;
   var STORM_BANNER = 2.8;
   var STORM_PERIOD = 34;
   var STORM_TELEGRAPH = 1.3;
@@ -221,8 +229,9 @@
   }
   function alleySide(index, seed) {
     const x = Math.imul(seed ^ (91 + index) * 2654435769, 2246822507) >>> 0;
-    const r = x % 3;
-    return r === 0 ? "left" : r === 1 ? "right" : "both";
+    const r = x % 6;
+    if (r === 0) return "both";
+    return r % 2 === 0 ? "left" : "right";
   }
   function alleyBannerText(side) {
     if (side === "left") return "\u5DF7\u53E3\u6765\u88AD\uFF01\u5DE6\u4FA7\u63D2\u8FDB\uFF01";
@@ -238,7 +247,7 @@
     if (count >= MAX_SQUAD) {
       return { ...ev, gate: "shield", value: void 0, weapon: void 0, label: "\u62A4\u76FE" };
     }
-    if (time >= SCENE_SHIFT_AT) {
+    if (time >= OPENING_END) {
       const v = lateRefillAmount(count);
       return { ...ev, gate: "add", value: v, weapon: void 0, label: "+" + v };
     }
@@ -338,7 +347,10 @@
     return ENDLESS_GATE_CYCLE[i];
   }
   function endlessHordeInterval(t) {
-    return Math.max(0.14, 0.24 - Math.max(0, t - 70) * 2e-3);
+    if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST) {
+      return Math.max(0.3, 0.4 - Math.max(0, t - 70) * 1e-3);
+    }
+    return Math.max(0.16, 0.26 - Math.max(0, t - HOLD_FIRST) * 2e-3);
   }
   var ENDLESS_MIX = [
     "walker",
@@ -2698,6 +2710,12 @@
       this.stormStarted = false;
       this.nextStormAt = 0;
       this.alleyFacing = "both";
+      this.pendingGoldClose = false;
+      this.lastRightWarnAt = 0;
+      this.lastWarnEndAt = 0;
+      this.lastWarnLane = null;
+      this.lastAlleyAt = 0;
+      this.nightHordeToggle = false;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2841,6 +2859,12 @@
       this.stormStarted = false;
       this.nextStormAt = 0;
       this.alleyFacing = "both";
+      this.pendingGoldClose = false;
+      this.lastRightWarnAt = 0;
+      this.lastWarnEndAt = 0;
+      this.lastWarnLane = null;
+      this.lastAlleyAt = 0;
+      this.nightHordeToggle = false;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -2907,6 +2931,10 @@
       while (this.cursor < TIMELINE.length && TIMELINE[this.cursor].time <= this.time) {
         const ev = TIMELINE[this.cursor++];
         if (ev.kind === "enemy" && (quiet || holdRight && ev.lane === "right")) continue;
+        if (ev.kind === "enemy" && ev.lane === "right" && this.time >= SCENE_SHIFT_AT && this.time < 90) {
+          this.nightHordeToggle = !this.nightHordeToggle;
+          if (this.nightHordeToggle) continue;
+        }
         this.applyEvent(ev);
         this.spawned.push(ev);
       }
@@ -2996,14 +3024,23 @@
           this.namedKind = null;
           this.bannerText = null;
         }
-        if (wasWindow && this.time >= this.exclusiveUntil) {
-          this.showNamed("goldEnd", "\u91D1\u95E8\u5173\u95ED\uFF01", GOLD_CLOSE_BANNER, void 0, true);
+        if (wasWindow) {
+          this.pendingGoldClose = true;
+          this.goldSafeUntil = Math.max(this.goldSafeUntil, this.time + GOLD_CLOSE_BANNER + 1);
         }
+      }
+      if (this.pendingGoldClose && !this.warningLane && this.time >= this.exclusiveUntil) {
+        this.showNamed("goldEnd", "\u91D1\u95E8\u5173\u95ED\uFF01", GOLD_CLOSE_BANNER, void 0, true);
+        this.goldSafeUntil = Math.max(this.goldSafeUntil, this.namedUntil + 1);
+        this.pendingGoldClose = false;
       }
       const due = goldWindowTime(this.nextGoldWindowI, this.runSeed);
       if (this.time >= due && this.time >= GOLD_GATE_AT + GOLD_GATE_LIFE) {
         if (this.time < this.exclusiveUntil) return;
         if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley" || this.namedKind === "hold") {
+          return;
+        }
+        if (this.lastRightWarnAt > 0 && this.time - this.lastRightWarnAt < GOLD_WARN_SETTLE) {
           return;
         }
         if (this.nextPincerAt - this.time < 4.2 && this.nextPincerAt >= this.time - 0.2) {
@@ -3028,9 +3065,17 @@
       }
     }
     isGoldWindowProtected() {
-      if (this.goldWindowOpen) return true;
+      if (this.goldWindowOpen || this.pendingGoldClose) return true;
       if (this.namedKind === "goldEnd" && this.time < this.namedUntil) return true;
       return this.time < this.goldSafeUntil && this.goldSafeUntil > 0;
+    }
+    goldDueSoon(window2 = 5) {
+      if (this.time < GOLD_GATE_AT + GOLD_GATE_LIFE) return false;
+      const due = goldWindowTime(this.nextGoldWindowI, this.runSeed);
+      return due - this.time <= window2 && due >= this.time - 0.25;
+    }
+    nightHeavyLocked() {
+      return this.time >= SCENE_SHIFT_AT && this.time < SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK && this.squad.weapon === "heavy" && this.squad.weaponTime > 1;
     }
     thinRightColumn() {
       const list = this.enemies.pool.active.slice();
@@ -3069,7 +3114,9 @@
     showNightBanner() {
       this.pendingNightBanner = false;
       this.showNamed("scene", "\u8FDB\u5165\u591C\u8DEF\u53E3\uFF01", SCENE_BANNER, void 0, true);
-      this.pushEventsPast(this.time + SCENE_BANNER + 5);
+      const settle = this.time + SCENE_BANNER + 6;
+      this.pushEventsPast(settle);
+      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, settle);
     }
     grantNightStart() {
       this.squad.equip("heavy");
@@ -3130,7 +3177,18 @@
         return;
       }
       if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene !== "day") {
-        this.alleyFacing = alleySide(this.nextAlleyI, this.runSeed);
+        if (this.lastWarnEndAt > 0 && this.time - this.lastWarnEndAt < EVENT_GAP) {
+          this.nextAlleyAt = Math.max(this.nextAlleyAt, this.lastWarnEndAt + EVENT_GAP);
+          return;
+        }
+        let side = alleySide(this.nextAlleyI, this.runSeed);
+        if (this.lastWarnLane && this.time - this.lastWarnEndAt < EVENT_GAP + 3) {
+          side = this.lastWarnLane;
+        } else if (side === "both" && this.time - this.lastWarnEndAt < EVENT_GAP + 5) {
+          side = this.lastWarnLane === "right" ? "left" : "right";
+        }
+        this.alleyFacing = side;
+        this.lastAlleyAt = this.time;
         this.showNamed("alley", alleyBannerText(this.alleyFacing), ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
       }
     }
@@ -3155,7 +3213,10 @@
       this.holdStarted = true;
       this.holdUntil = this.time + HOLD_TELEGRAPH + HOLD_DURATION;
       this.showNamed("hold", "\u5B88\u4F4F\u4E2D\u9053\uFF01", HOLD_TELEGRAPH + HOLD_DURATION, this.time + HOLD_TELEGRAPH, true);
-      this.pushEventsPast(this.holdUntil + 1.4);
+      this.pushEventsPast(this.holdUntil + STORM_DELAY + 2.5);
+      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.holdUntil + STORM_DELAY);
+      this.quietUntil = Math.max(this.quietUntil, this.time + 4);
+      this.squad.grantShield(NIGHT_SHIELD_DURATION);
       this.placeHoldMidReward();
     }
     placeHoldMidReward() {
@@ -3168,7 +3229,7 @@
       if (atCap) {
         this.gates.spawn({ kind: "shield", lane: "mid", label: "\u62A4\u76FE", z: 38 });
       } else {
-        const v = lateRefillAmount(this.squad.count);
+        const v = Math.max(LATE_REFILL_LOW, lateRefillAmount(this.squad.count));
         this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 38 });
       }
     }
@@ -3176,6 +3237,11 @@
       this.scene = "storm";
       this.stormStarted = true;
       this.nextStormAt = this.time + STORM_DELAY;
+      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.nextStormAt);
+      this.quietUntil = Math.max(this.quietUntil, this.time + 6);
+      this.squad.grantShield(NIGHT_SHIELD_DURATION);
+      this.pushEventsPast(this.nextStormAt + 2);
+      this.thinRightColumn();
     }
     updateStorm() {
       if (this.namedKind === "storm" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
@@ -3257,6 +3323,9 @@
         if (this.time >= this.warningImpactAt) {
           const lane = this.warningLane;
           this.warningLane = null;
+          this.lastWarnEndAt = this.time;
+          this.lastWarnLane = lane;
+          if (lane === "right") this.lastRightWarnAt = this.time;
           if (inLane(this.squad.x, lane) && this.squad.count > 0) {
             this.squad.lose(WARNING_DAMAGE);
             this.shake = 0.32;
@@ -3267,9 +3336,18 @@
         return;
       }
       if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil && !this.pendingNightBanner) {
+        if (this.namedKind === "alley" || this.time - this.lastAlleyAt < EVENT_GAP) {
+          this.nextWarningAt = Math.max(this.nextWarningAt, this.time + 0.8);
+          return;
+        }
+        if (this.scene !== "day" && this.nextAlleyAt > 0 && this.nextAlleyAt - this.time <= EVENT_GAP) {
+          this.nextWarningAt = Math.max(this.nextWarningAt, Math.max(this.time, this.nextAlleyAt) + EVENT_GAP);
+          return;
+        }
         const lane = laneOfX(this.squad.x);
-        if (lane === "right" && this.isGoldWindowProtected()) {
-          this.nextWarningAt = Math.max(this.goldSafeUntil, this.time) + 0.45;
+        if (lane === "right" && (this.isGoldWindowProtected() || this.goldDueSoon(5) || this.pendingGoldClose)) {
+          const until = Math.max(this.goldSafeUntil, this.time);
+          this.nextWarningAt = until + (this.goldDueSoon(5) ? GOLD_WINDOW_LIFE + GOLD_CLOSE_BANNER + 1 : 0.6);
           return;
         }
         this.warningLane = lane;
@@ -3331,7 +3409,16 @@
     relabelActiveGates() {
       const list = this.gates.pool.active;
       for (const g of list) {
-        if (!g.alive || g.kind === "amp" || g.kind === "red" || g.kind === "weapon") continue;
+        if (!g.alive || g.kind === "amp" || g.kind === "red") continue;
+        if (g.kind === "weapon") {
+          if (this.nightHeavyLocked() && g.weapon && g.weapon !== "heavy") {
+            g.kind = "shield";
+            g.value = 0;
+            g.weapon = null;
+            g.label = "\u62A4\u76FE";
+          }
+          continue;
+        }
         if (this.squad.count >= 20) {
           if (g.kind === "add" || g.kind === "mul" || g.kind === "shield") {
             g.kind = "shield";
@@ -3341,7 +3428,7 @@
           }
           continue;
         }
-        if (this.time >= SCENE_SHIFT_AT && (g.kind === "add" || g.kind === "mul" || g.kind === "shield")) {
+        if (this.time >= OPENING_END && (g.kind === "add" || g.kind === "mul" || g.kind === "shield")) {
           const v = lateRefillAmount(this.squad.count);
           g.kind = "add";
           g.value = v;
@@ -3410,7 +3497,7 @@
         for (const g of gateList) {
           if (!g.alive || g.kind === "amp" || g.stationary) continue;
           if (!this.bulletCrosses(b, g.z, g.x)) continue;
-          chargeGate(g, this.time >= SCENE_SHIFT_AT ? LATE_REFILL : void 0);
+          chargeGate(g, this.time >= OPENING_END ? lateRefillAmount(this.squad.count) : void 0);
           this.particles.sparks(g.x, 1.2, g.z);
           this.bullets.pool.release(b);
           consumed = true;
@@ -3543,8 +3630,13 @@
         this.audio.play("red");
       } else if (g.kind === "weapon" && g.weapon) {
         const id = g.weapon;
-        this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
-        this.audio.play("weapon");
+        if (this.nightHeavyLocked() && id !== "heavy") {
+          this.squad.grantShield(SHIELD_GATE_DURATION);
+          this.audio.play("gate");
+        } else {
+          this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
+          this.audio.play("weapon");
+        }
       } else if (g.kind === "shield") {
         this.squad.grantShield(SHIELD_GATE_DURATION);
         this.audio.play("gate");

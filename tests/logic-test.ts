@@ -31,7 +31,13 @@ import {
   GOLD_WINDOW_LULL,
   GOLD_WINDOW_LIFE,
   GOLD_CLOSE_BANNER,
+  GOLD_WARN_SETTLE,
   HOLD_FIRST,
+  EVENT_GAP,
+  OPENING_END,
+  STORM_DELAY,
+  NIGHT_HEAVY_LOCK,
+  lateRefillAmount,
   alleyBannerText,
   alleySide,
   alleyTime,
@@ -902,7 +908,7 @@ console.log("18. 夜路口场景、安静重整与具名事件；横幅写明左
 
   const alleyAt = alleyTime(0, 1);
   let sawAlley = false;
-  const alleyDeadline = Math.max(alleyAt, g.time) + 8;
+  const alleyDeadline = Math.max(alleyAt, g.time) + 16;
   while (g.time < alleyDeadline && g.state === "playing") {
     g.enemies.clear();
     g.props.clear();
@@ -954,7 +960,8 @@ console.log("19. 中后期时间轴随对局种子变化");
   const t2 = pincerTime(0, 99);
   assert(t1 !== t2 || kinds1 !== kinds2 || labels1.join() !== labels2.join(), "两局中后期不应是同一条钟点表");
   assert(holdTime(1) !== holdTime(99), "不同种子的守住中道时间应不同");
-  assert(alleySide(0, 1) !== alleySide(0, 3) || alleySide(1, 1) !== alleySide(1, 99), "不同种子的巷口方位应能变化");
+  const sideSet = new Set([1, 3, 7, 11, 19, 41, 99, 123].flatMap((s) => [0, 1, 2].map((i) => alleySide(i, s))));
+  assert(sideSet.size >= 2, "不同种子的巷口方位应能变化，得到 " + [...sideSet].join(","));
   assert(alleyBannerText("left").includes("左侧") && alleyBannerText("both").includes("左右"), "巷口文案应按方位区分");
 }
 
@@ -1120,7 +1127,9 @@ console.log("23. 入夜且满编后补人门减弱，不再显示假 +N");
   const earlyCap = softenGate(rawAdd, 20, 20, 20);
   assert(earlyCap.gate === "shield" && earlyCap.label === "护盾", "白天满编时门也应写成护盾，不能再写 +N，得到 " + earlyCap.gate + "/" + earlyCap.label);
   const earlyLow = softenGate(rawAdd, 20, 8, 20);
-  assert(earlyLow.gate === "add" && earlyLow.value === 5, "入夜前未满编仍用原来的补人门");
+  assert(earlyLow.gate === "add" && earlyLow.value === 1 && earlyLow.label === "+1", "教学结束后白天不满编也只能小幅补人，得到 " + earlyLow.label);
+  const teachLow = softenGate(rawAdd, 10, 8, 8);
+  assert(teachLow.gate === "add" && teachLow.value === 5, "开局教学段未满编仍用原来的补人门，得到 " + teachLow.label);
 
   const g = new Game(mockPlatform());
   g.beginRun(1);
@@ -1232,8 +1241,8 @@ console.log("25. 入夜横幅不覆盖躲开左道；2:30 之后进入雨夜推�
     hold.input.targetX = 0;
     hold.enemies.clear();
   }
-  // 等到守住中道结束
-  const afterHold = hold.time + 12;
+  // 等到守住中道结束，再留出雨夜横幅前的空档
+  const afterHold = hold.time + STORM_DELAY + 8;
   let sawStorm = false;
   while (hold.time < afterHold && hold.state === "playing") {
     hold.squad.setCount(20);
@@ -1273,6 +1282,217 @@ console.log("26. 入夜后开枪不能把小补门打成 +15");
   g.step(0.05);
   const asShield = g.gates.pool.active[0];
   assert(asShield && asShield.kind === "shield" && asShield.label === "护盾", "人一旦满编，场上的补人门应改成护盾并改标签");
+}
+
+console.log("27. 第四轮：入夜压力、雨夜空档、金门指令、补人与重击锁定");
+{
+  assert(warningPeriod(90) >= 11, "1:10–1:45 红预警间隔仍应偏宽");
+  assert(rushPeriod(90) >= 16, "1:10–1:45 左道来袭间隔仍应偏宽");
+  assert(enemyHpMul(90) < enemyHpMul(160), "岔路口前血量涨幅应低于后期");
+
+  const dayMid = softenGate(
+    { time: 25, kind: "gate" as const, lane: "left" as const, gate: "add" as const, value: 15, label: "+15" },
+    25,
+    16,
+    16,
+  );
+  assert(dayMid.gate === "add" && (dayMid.value ?? 9) <= 2, "白天 16 人时不应再给一扇能补满的 +15，得到 " + dayMid.label);
+  const day19 = softenGate(
+    { time: 30, kind: "gate" as const, lane: "left" as const, gate: "add" as const, value: 15, label: "+15" },
+    30,
+    19,
+    20,
+  );
+  assert(day19.gate === "add" && day19.value === 1, "白天 19 人时也不应一扇补满，得到 " + day19.label);
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(16);
+  while (g.time < OPENING_END + 4 && g.state === "playing") {
+    g.step(0.3);
+    g.squad.setCount(16);
+  }
+  g.gates.clear();
+  g.gates.spawn({ kind: "add", lane: "left", value: 15, label: "+15", z: 28 });
+  g.gates.spawn({ kind: "shield", lane: "right", label: "护盾", z: 28 });
+  g.squad.setCount(16);
+  g.step(0.05);
+  const afterOpen = g.gates.pool.active.filter((x) => x.kind === "add" || x.kind === "mul" || x.kind === "shield");
+  assert(
+    afterOpen.every((x) => x.kind === "add" && (x.value ?? 9) <= 2 && !(x.label || "").includes("15")),
+    "教学结束后场上不应再有 +15，也不能护盾和 +15 并排，得到 " + afterOpen.map((x) => x.label).join(","),
+  );
+  const charge = new Game(mockPlatform());
+  charge.beginRun(1);
+  charge.squad.setCount(15);
+  while (charge.time < OPENING_END + 2 && charge.state === "playing") {
+    charge.step(0.3);
+    charge.squad.setCount(15);
+  }
+  charge.gates.clear();
+  charge.gates.spawn({ kind: "add", lane: "left", value: 1, label: "+1", z: 40 });
+  const cg = charge.gates.pool.active[0];
+  for (let i = 0; i < 20; i++) chargeGate(cg, lateRefillAmount(15));
+  charge.squad.setCount(15);
+  charge.step(0.05);
+  const still = charge.gates.pool.active[0];
+  assert(still && still.label === "+1" && still.value === 1, "白天开枪也不能把小补门打成 +15，得到 " + (still ? still.label + "/" + still.value : "无"));
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  const due = goldWindowTime(0, 1);
+  g.squad.setCount(20);
+  g.squad.x = LANE_X;
+  g.input.targetX = LANE_X;
+  while (g.time < due - 1.4 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+  }
+  g.warningLane = "right";
+  g.warningImpactAt = g.time + 1.2;
+  let lastDodgeRight = -99;
+  let lastGoldCue = -99;
+  let clash = false;
+  const until = due + GOLD_WINDOW_LIFE + GOLD_CLOSE_BANNER + 4;
+  let sawGold = false;
+  let sawClose = false;
+  let dodgeDuringClose = false;
+  while (g.time < until && g.state === "playing") {
+    g.squad.setCount(20);
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+    const b = g.getState().banner;
+    const text = b ? b.text : "";
+    if (text.includes("躲开右道")) {
+      if (g.time - lastGoldCue < EVENT_GAP) clash = true;
+      lastDodgeRight = g.time;
+      if (g.namedKind === "goldEnd" || text.includes("金门关闭")) dodgeDuringClose = true;
+      if (g.getState().goldSafe) dodgeDuringClose = true;
+    }
+    if (text.includes("右道") && text.includes("×2")) {
+      if (g.time - lastDodgeRight < GOLD_WARN_SETTLE) clash = true;
+      lastGoldCue = g.time;
+      sawGold = true;
+    }
+    if (text.includes("金门关闭")) sawClose = true;
+  }
+  assert(sawGold, "中段金门窗口仍应出现，右道×2 是真选择");
+  assert(!clash, "「躲开右道！」和「右道×2！快切」不应叠在同一窗口");
+  assert(sawClose, "金门结束应打出「金门关闭！」横幅");
+  assert(!dodgeDuringClose, "躲开右道必须等「金门关闭！」横幅结束，不能只等门精灵消失");
+}
+
+{
+  const bothRate = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].filter((i) => alleySide(i, 1) === "both").length / 12;
+  assert(bothRate <= 0.34, "巷口应更常单侧插进，「左右插进」不应占多数，得到 " + bothRate.toFixed(2));
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  while (g.time < SCENE_SHIFT_AT + 4 && g.state === "playing") {
+    g.step(0.25);
+    g.squad.setCount(20);
+    g.squad.x = -LANE_X;
+    g.input.targetX = -LANE_X;
+    g.enemies.clear();
+  }
+  g.warningLane = "left";
+  g.warningImpactAt = g.time + 0.15;
+  g.nextAlleyAt = g.time + 0.4;
+  g.namedKind = null;
+  g.bannerText = null;
+  g.exclusiveUntil = 0;
+  let alleyAt = 0;
+  let dodgeEnd = 0;
+  let bothSoon = false;
+  const watch = g.time + EVENT_GAP + 2;
+  while (g.time < watch && g.state === "playing") {
+    const beforeLane = g.warningLane;
+    g.squad.setCount(20);
+    g.squad.x = -LANE_X;
+    g.input.targetX = -LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+    if (beforeLane && !g.warningLane && !dodgeEnd) dodgeEnd = g.time;
+    const b = g.getState().banner;
+    if (b && b.text.includes("巷口来袭") && !alleyAt) {
+      alleyAt = g.time;
+      if (b.text.includes("左右") && dodgeEnd && alleyAt - dodgeEnd < EVENT_GAP) bothSoon = true;
+    }
+  }
+  assert(!alleyAt || (dodgeEnd && alleyAt - dodgeEnd >= EVENT_GAP - 0.05), "躲开后约 2 秒内不应再叠巷口来袭，间隔 " + (alleyAt && dodgeEnd ? (alleyAt - dodgeEnd).toFixed(2) : "未出现"));
+  assert(!bothSoon, "躲开后若出巷口，也不应立刻左右同时插进");
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  while (g.time < SCENE_SHIFT_AT + 0.4 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+  }
+  assertEq(g.squad.weapon, "heavy", "入夜应补满重击");
+  g.gates.clear();
+  g.gates.spawn({ kind: "weapon", lane: "right", weapon: "smg", label: "冲锋枪", z: 13.5 });
+  g.squad.x = LANE_X;
+  g.input.targetX = LANE_X;
+  const lockUntil = Math.min(SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - 1, g.time + 4);
+  while (g.time < lockUntil && g.state === "playing" && g.gates.pool.active.some((x) => x.kind === "weapon" || (x.label || "").includes("冲锋"))) {
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+  }
+  // 若门已被改成护盾，走过去也不该换掉重击
+  const leftover = g.gates.pool.active.filter((x) => x.z < 20);
+  for (const x of leftover) {
+    if (x.kind === "weapon" && x.weapon && x.weapon !== "heavy") {
+      assert(false, "入夜后硬段不应再摆出会替换重击的冲锋枪门");
+    }
+  }
+  assertEq(g.squad.weapon, "heavy", "入夜硬段内冲锋枪门不应把刚补满的重击换掉，得到 " + g.squad.weapon);
+}
+
+{
+  const hold = new Game(mockPlatform());
+  hold.beginRun(1);
+  hold.squad.setCount(8);
+  const due = holdTime(1);
+  while (hold.time < due + 8 && hold.state === "playing") {
+    hold.step(0.25);
+    hold.squad.setCount(8);
+    hold.squad.x = 0;
+    hold.input.targetX = 0;
+    hold.enemies.clear();
+    hold.bullets.clear();
+  }
+  const after = hold.time + STORM_DELAY + 6;
+  let sawStorm = false;
+  let minCount = hold.squad.count;
+  while (hold.time < after && hold.state === "playing") {
+    hold.squad.x = 0;
+    hold.input.targetX = 0;
+    hold.enemies.clear();
+    hold.bullets.clear();
+    hold.step(0.15);
+    minCount = Math.min(minCount, hold.squad.count);
+    if (hold.squad.count > 0 && hold.squad.count < 8) hold.squad.setCount(Math.max(hold.squad.count, 6));
+    const st = hold.getState();
+    if (st.banner && st.banner.text.includes("雨夜推进")) sawStorm = true;
+  }
+  assert(hold.state === "playing", "守住中道后不应在几秒内团灭，状态 " + hold.state);
+  assertEq(hold.getState().scene, "storm", "岔路口结束后应进入雨夜");
+  assert(sawStorm, "雨夜推进横幅必须能看见，不能被团灭跳过");
 }
 
 console.log("");
