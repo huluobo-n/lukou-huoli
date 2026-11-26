@@ -668,8 +668,9 @@ export class Game {
   }
 
   private grantNightStart(): void {
-    // 即便重击还剩几秒，也刷新到满时长，避免刚入夜最难的一段空成手枪
+    // 刷新重击并拉长到入夜硬段结束，避免约 1:15 就退回手枪
     this.squad.equip("heavy");
+    this.squad.weaponTime = NIGHT_HEAVY_LOCK;
     this.squad.grantShield(NIGHT_SHIELD_DURATION);
   }
 

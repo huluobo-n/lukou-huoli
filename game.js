@@ -3120,6 +3120,7 @@
     }
     grantNightStart() {
       this.squad.equip("heavy");
+      this.squad.weaponTime = NIGHT_HEAVY_LOCK;
       this.squad.grantShield(NIGHT_SHIELD_DURATION);
     }
     pushEventsPast(until) {

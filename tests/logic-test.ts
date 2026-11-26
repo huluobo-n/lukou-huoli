@@ -1461,6 +1461,13 @@ console.log("27. 第四轮：入夜压力、雨夜空档、金门指令、补人
     }
   }
   assertEq(g.squad.weapon, "heavy", "入夜硬段内冲锋枪门不应把刚补满的重击换掉，得到 " + g.squad.weapon);
+  while (g.time < 90 && g.state === "playing") {
+    g.squad.setCount(20);
+    g.enemies.clear();
+    g.step(0.3);
+  }
+  assertEq(g.squad.weapon, "heavy", "重击应覆盖入夜硬段，约 1:30 不应已退回手枪，得到 " + g.squad.weapon + " / " + g.squad.weaponTime.toFixed(1) + "s");
+  assert(g.squad.weaponTime > 1, "1:30 时重击仍应有剩余时长，得到 " + g.squad.weaponTime.toFixed(1));
 }
 
 {
