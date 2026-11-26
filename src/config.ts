@@ -218,7 +218,7 @@ export const SCENE_BANNER = 2.8;
 /** 金色增幅门不再永久停住：第一次持续一段时间后消失，之后短暂重开 */
 export const GOLD_GATE_LIFE = 16;
 export const GOLD_WINDOW_LIFE = 10;
-export const GOLD_WINDOW_LULL = 4.8;
+export const GOLD_WINDOW_LULL = 9.0;
 export const GOLD_WINDOW_SAFE = 6.5;
 export const GOLD_WINDOW_Z = 32;
 export const GOLD_WINDOW_BASE = [74, 112, 176];
@@ -240,11 +240,14 @@ export const ALLEY_SIDE_X = 8.0;
 
 /** 约 2:30 进入岔路口，并短暂要求守住中道 */
 export const HOLD_FIRST = 150;
-export const HOLD_TELEGRAPH = 1.6;
+export const HOLD_TELEGRAPH = 2.4;
 export const HOLD_DURATION = 5.2;
-export const HOLD_DAMAGE = 8;
-export const HOLD_MID = 1.15;
+export const HOLD_DAMAGE = 5;
+export const HOLD_MID = 2.05;
+export const HOLD_NEAR = 2.6;
+export const HOLD_NEAR_DAMAGE = 3;
 export const HOLD_SETTLE = 12;
+export const HOLD_REFILL = 3;
 export const ENDLESS_GATE_PERIOD_LATE = 14;
 
 /** 入夜后小幅补人，极低人数时可补 +2，但绝不能一扇补满 */
@@ -259,8 +262,14 @@ export const OPENING_END = 16;
 export const NIGHT_HEAVY_LOCK = 50;
 export const GOLD_WARN_SETTLE = 3.5;
 export const STORM_BANNER = 2.8;
+export const STORM_BANNER_FIRST = 5.6;
 export const STORM_PERIOD = 34;
 export const STORM_TELEGRAPH = 1.3;
+export const STORM_TELEGRAPH_FIRST = 2.0;
+export const FLOOD_TELEGRAPH = 2.2;
+export const FLOOD_DURATION = 6.0;
+export const FLOOD_DAMAGE = 4;
+export const FLOOD_MID = 1.35;
 
 /** 错过第一扇加人门时，右道补一扇小 +2，不改开局 10 秒压力 */
 export const MERCY_AT = 10.2;
@@ -291,6 +300,14 @@ export function alleyTime(index: number, seed: number): number {
 
 export function holdTime(seed: number): number {
   return HOLD_FIRST + seedOffset(seed, 71, 8);
+}
+
+/** 完全在亮中道不受伤；略偏中左/中右轻罚；贴边才按 HOLD_DAMAGE */
+export function holdDamageAt(x: number): number {
+  const d = Math.abs(x);
+  if (d <= HOLD_MID) return 0;
+  if (d < HOLD_NEAR) return HOLD_NEAR_DAMAGE;
+  return HOLD_DAMAGE;
 }
 
 export function stormTime(index: number, seed: number): number {

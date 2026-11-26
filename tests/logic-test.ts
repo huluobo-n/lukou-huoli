@@ -34,6 +34,12 @@ import {
   GOLD_WARN_SETTLE,
   HOLD_FIRST,
   HOLD_SETTLE,
+  HOLD_REFILL,
+  HOLD_MID,
+  STORM_BANNER_FIRST,
+  FLOOD_DAMAGE,
+  FLOOD_TELEGRAPH,
+  FLOOD_DURATION,
   EVENT_GAP,
   OPENING_END,
   STORM_DELAY,
@@ -54,6 +60,7 @@ import {
   rushPeriod,
   warningPeriod,
   warningDamage,
+  holdDamageAt,
 } from "../src/config";
 import { Game } from "../src/game";
 import { LEGAL_AGE, LEGAL_PRIVACY, LEGAL_SUMMARY } from "../src/legal";
@@ -1099,7 +1106,7 @@ console.log("22. 约 2:30 出现守住中道的新阶段");
   assertEq(g.getState().scene, "fork", "守住中道时应切到岔路口结构，当前 " + g.getState().scene);
   const midReward = g.gates.pool.active.filter((x) => x.lane === "mid" || Math.abs(x.x) < 0.6);
   assert(midReward.length >= 1, "守住中道的奖励应放在中间车道");
-  assert(midReward.every((x) => x.kind === "shield" || (x.kind === "add" && (x.value ?? 0) <= 2)), "中道奖励应是护盾或小幅补人");
+  assert(midReward.every((x) => x.kind === "shield" || (x.kind === "add" && (x.value ?? 0) <= HOLD_REFILL)), "中道奖励应是护盾或小幅补人");
   const leftBig = g.gates.pool.active.filter((x) => x.x < -1 && (x.kind === "add" || x.kind === "mul") && ((x.value ?? 0) >= 3 || (x.label || "").includes("15") || (x.label || "").includes("×2")));
   assert(leftBig.length === 0, "守住中道时左边不应停着 +15 或其它大号奖励，得到 " + leftBig.map((x) => x.label).join(","));
 
@@ -1592,7 +1599,179 @@ console.log("28. 第五轮：1:20–2:05 放缓、躲开不再打残、分叉前
     g.step(0.1);
   }
   const expectMin = Math.max(0, SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - g.time) - 0.4;
-  assert(g.squad.weapon === "heavy" && g.squad.weaponTime >= Math.max(16, expectMin), "入夜后再走重击门不应把剩余时长打回 15 秒，得到 " + g.squad.weaponTime.toFixed(1));
+  assert(g.squad.weapon === "heavy" && g.squad.weaponTime >= expectMin, "入夜后再走重击门应保持原到期时间，得到 " + g.squad.weaponTime.toFixed(1));
+  assert(g.squad.weaponTime <= expectMin + 2, "锁定期内走重击门也不应把剩余时长重新计成 15 秒，得到 " + g.squad.weaponTime.toFixed(1));
+}
+
+console.log("29. 第六轮：分叉留人、雨夜积水、重击不续成 15 秒、横幅更长、金门里不出躲开左道");
+{
+  assert(holdDamageAt(0) === 0 && holdDamageAt(1.6) === 0, "站在亮中道或中左不应被守住中道重罚");
+  assert(holdDamageAt(-LANE_X) >= 3 && holdDamageAt(-LANE_X) <= 5, "完全抱左仍应受罚，但不应一刀砍掉 8 人");
+  assert(STORM_BANNER_FIRST >= 5, "第一次雨夜推进横幅应更长，好认");
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(14);
+  const due = holdTime(1);
+  while (g.time < due + 0.4 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(14);
+    g.squad.x = -1.6;
+    g.input.targetX = -1.6;
+    g.enemies.clear();
+    g.bullets.clear();
+  }
+  g.squad.setCount(14);
+  g.squad.iframes = 0;
+  g.squad.shieldTime = 0;
+  g.squad.x = -1.6;
+  g.input.targetX = -1.6;
+  while (g.getState().hold && g.state === "playing") {
+    g.enemies.clear();
+    g.bullets.clear();
+    g.squad.x = -1.6;
+    g.input.targetX = -1.6;
+    g.step(0.1);
+  }
+  assert(g.squad.count >= 12, "中左略偏不应从 14 人一下掉到 6 人，得到 " + g.squad.count);
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(10);
+  const due = holdTime(1);
+  let sawBiggerMid = false;
+  let midLabels: string[] = [];
+  while (g.time < due + 8 && g.state === "playing") {
+    g.step(0.1);
+    g.squad.setCount(10);
+    g.squad.x = 0;
+    g.input.targetX = 0;
+    g.enemies.clear();
+    g.bullets.clear();
+    const mid = g.gates.pool.active.filter((x) => x.lane === "mid" || Math.abs(x.x) < 0.6);
+    if (mid.length) midLabels = mid.map((x) => x.label || x.kind);
+    if (mid.some((x) => x.kind === "shield" || (x.kind === "add" && (x.value ?? 0) >= 3))) sawBiggerMid = true;
+  }
+  assert(sawBiggerMid, "分叉中道补人应略多一点，得到 " + midLabels.join(","));
+
+  // 等到第一次雨夜横幅和积水事件
+  const until = g.time + STORM_DELAY + STORM_BANNER_FIRST + FLOOD_TELEGRAPH + FLOOD_DURATION + 4;
+  let sawStorm = false;
+  let sawFlood = false;
+  let stormMs = 0;
+  let lastBanner = "";
+  let bannerStart = 0;
+  while (g.time < until && g.state === "playing") {
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+    g.bullets.clear();
+    g.squad.setCount(Math.max(g.squad.count, 8));
+    g.step(0.1);
+    const b = g.getState().banner;
+    const text = b ? b.text : "";
+    if (text.includes("雨夜推进")) {
+      sawStorm = true;
+      if (lastBanner !== text) bannerStart = g.time;
+      stormMs = Math.max(stormMs, g.time - bannerStart);
+    }
+    if (text.includes("积水")) sawFlood = true;
+    lastBanner = text;
+  }
+  assert(sawStorm, "应打出「雨夜推进！」横幅");
+  assert(stormMs >= 5, "第一次雨夜推进横幅应足够长，实际约 " + stormMs.toFixed(1) + " 秒");
+  assert(sawFlood, "雨夜应有一眼能认出的新事件「主路积水！快靠边！」");
+  assert(g.getState().scene === "storm", "应处于雨夜");
+}
+
+{
+  const flood = new Game(mockPlatform());
+  flood.beginRun(1);
+  flood.squad.setCount(10);
+  const due = holdTime(1);
+  while (flood.time < due + 8 && flood.state === "playing") {
+    flood.step(0.25);
+    flood.squad.setCount(10);
+    flood.squad.x = 0;
+    flood.input.targetX = 0;
+    flood.enemies.clear();
+    flood.bullets.clear();
+  }
+  const watch = flood.time + STORM_DELAY + STORM_BANNER_FIRST + FLOOD_TELEGRAPH + 3;
+  let flooded = false;
+  while (flood.time < watch && flood.state === "playing") {
+    flood.squad.x = 0;
+    flood.input.targetX = 0;
+    flood.enemies.clear();
+    flood.bullets.clear();
+    flood.squad.iframes = 0;
+    flood.squad.shieldTime = 0;
+    const before = flood.squad.count;
+    flood.step(0.1);
+    const b = flood.getState().banner;
+    if (b && b.text.includes("积水") && flood.squad.count < before) flooded = true;
+    if (flood.squad.count < 8) flood.squad.setCount(10);
+  }
+  assert(flooded, "积水时仍站在中道应掉人，玩家必须靠边");
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  const lockEnd = SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK;
+  while (g.time < lockEnd - 6 && g.state === "playing") {
+    g.step(0.3);
+    g.squad.setCount(20);
+    g.squad.weapon = "heavy";
+    g.squad.weaponTime = Math.max(5, lockEnd - g.time);
+  }
+  g.squad.weapon = "heavy";
+  g.squad.weaponTime = 5;
+  g.gates.clear();
+  g.gates.spawn({ kind: "weapon", lane: "right", weapon: "heavy", label: "重击", z: 13.5 });
+  g.squad.x = LANE_X;
+  g.input.targetX = LANE_X;
+  const t0 = g.time;
+  while (g.time < t0 + 2 && g.state === "playing" && g.gates.pool.active.some((x) => x.kind === "weapon" && x.weapon === "heavy")) {
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+  }
+  assert(g.squad.weapon === "heavy", "锁定期内仍应是重击");
+  assert(g.squad.weaponTime <= 5.2 && g.squad.weaponTime >= 2.5, "还剩 5 秒时走重击门不应重新计成 15 秒，得到 " + g.squad.weaponTime.toFixed(1));
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  const due = goldWindowTime(0, 1);
+  g.squad.setCount(20);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  while (g.time < due + 1 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+    g.squad.x = -LANE_X;
+    g.input.targetX = -LANE_X;
+    g.enemies.clear();
+  }
+  let leftWarn = false;
+  const until = due + GOLD_WINDOW_LIFE + GOLD_CLOSE_BANNER + 0.5;
+  while (g.time < until && g.state === "playing") {
+    g.squad.setCount(20);
+    g.squad.x = -LANE_X;
+    g.input.targetX = -LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+    const st = g.getState();
+    if ((st.goldSafe || st.gates.some((x) => x.kind === "amp")) && st.warning && st.warning.lane === "left") leftWarn = true;
+    if ((st.goldSafe || st.gates.some((x) => x.kind === "amp")) && st.banner && st.banner.text.includes("躲开左道")) leftWarn = true;
+  }
+  assert(!leftWarn, "金门开着或关闭提示未结束前，也不应打出躲开左道");
 }
 
 console.log("");

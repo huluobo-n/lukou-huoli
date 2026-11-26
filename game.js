@@ -182,7 +182,6 @@
   var SCENE_BANNER = 2.8;
   var GOLD_GATE_LIFE = 16;
   var GOLD_WINDOW_LIFE = 10;
-  var GOLD_WINDOW_LULL = 4.8;
   var GOLD_WINDOW_Z = 32;
   var GOLD_WINDOW_BASE = [74, 112, 176];
   var GOLD_CLOSE_BANNER = 2;
@@ -199,11 +198,14 @@
   var ALLEY_SPAWN_Z = 40;
   var ALLEY_SIDE_X = 8;
   var HOLD_FIRST = 150;
-  var HOLD_TELEGRAPH = 1.6;
+  var HOLD_TELEGRAPH = 2.4;
   var HOLD_DURATION = 5.2;
-  var HOLD_DAMAGE = 8;
-  var HOLD_MID = 1.15;
+  var HOLD_DAMAGE = 5;
+  var HOLD_MID = 2.05;
+  var HOLD_NEAR = 2.6;
+  var HOLD_NEAR_DAMAGE = 3;
   var HOLD_SETTLE = 12;
+  var HOLD_REFILL = 3;
   var ENDLESS_GATE_PERIOD_LATE = 14;
   var LATE_REFILL = 1;
   var LATE_REFILL_LOW = 2;
@@ -214,8 +216,14 @@
   var NIGHT_HEAVY_LOCK = 50;
   var GOLD_WARN_SETTLE = 3.5;
   var STORM_BANNER = 2.8;
+  var STORM_BANNER_FIRST = 5.6;
   var STORM_PERIOD = 34;
   var STORM_TELEGRAPH = 1.3;
+  var STORM_TELEGRAPH_FIRST = 2;
+  var FLOOD_TELEGRAPH = 2.2;
+  var FLOOD_DURATION = 6;
+  var FLOOD_DAMAGE = 4;
+  var FLOOD_MID = 1.35;
   var MERCY_AT = 10.2;
   var MERCY_MAX_COUNT = 2;
   var MERCY_Z = 22;
@@ -239,6 +247,12 @@
   }
   function holdTime(seed) {
     return HOLD_FIRST + seedOffset(seed, 71, 8);
+  }
+  function holdDamageAt(x) {
+    const d = Math.abs(x);
+    if (d <= HOLD_MID) return 0;
+    if (d < HOLD_NEAR) return HOLD_NEAR_DAMAGE;
+    return HOLD_DAMAGE;
   }
   function alleySide(index, seed) {
     const x = Math.imul(seed ^ (91 + index) * 2654435769, 2246822507) >>> 0;
@@ -1504,7 +1518,7 @@
   function isNight(scene) {
     return scene === "night" || scene === "fork" || scene === "storm";
   }
-  function drawWorld(ctx, camX, time, shakeX, shakeY, scene = "day", hold = false) {
+  function drawWorld(ctx, camX, time, shakeX, shakeY, scene = "day", hold = false, flood = false) {
     ctx.save();
     ctx.translate(shakeX, shakeY);
     drawSky(ctx, camX, scene);
@@ -1527,6 +1541,7 @@
     drawRoad(ctx, camX, time, scene);
     if (isNight(scene)) drawCrossAlley(ctx, camX, time);
     if (scene === "fork") drawForkPlaza(ctx, camX, time, hold);
+    if (flood) drawFloodMid(ctx, camX, time);
     drawRoadside(ctx, camX, time, scene);
     if (isNight(scene)) drawLamps(ctx, camX, time);
     if (scene === "storm") drawRain(ctx, time);
@@ -1631,6 +1646,33 @@
     ctx.lineTo(nearL.sx, nearL.sy);
     ctx.closePath();
     ctx.fill();
+  }
+  function drawFloodMid(ctx, camX, time) {
+    const half = 1.35;
+    const farL = pr(-half, 0.05, SPAWN_Z + 8, camX);
+    const farR = pr(half, 0.05, SPAWN_Z + 8, camX);
+    const nearL = pr(-half, 0.05, 8.5, camX);
+    const nearR = pr(half, 0.05, 8.5, camX);
+    const pulse = 0.34 + 0.08 * Math.sin(time * 7);
+    ctx.fillStyle = "rgba(40, 90, 150, " + pulse.toFixed(3) + ")";
+    ctx.beginPath();
+    ctx.moveTo(farL.sx, farL.sy);
+    ctx.lineTo(farR.sx, farR.sy);
+    ctx.lineTo(nearR.sx, nearR.sy);
+    ctx.lineTo(nearL.sx, nearL.sy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(160, 210, 255, 0.28)";
+    for (let i = 0; i < 6; i++) {
+      const z = 12 + (time * 10 + i * 7) % 36;
+      const a = pr(-half + 0.15, 0.08, z, camX);
+      const b = pr(half - 0.15, 0.08, z + 1.1, camX);
+      ctx.globalAlpha = 0.35 + 0.2 * Math.sin(time * 5 + i);
+      ctx.beginPath();
+      ctx.ellipse((a.sx + b.sx) / 2, (a.sy + b.sy) / 2, Math.max(8, (b.sx - a.sx) * 0.28), Math.max(3, a.scale * 3.5), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
   function drawForkPlaza(ctx, camX, time, hold) {
     const z = wrapZ(30, time * 0.08, 18, 50);
@@ -2733,6 +2775,11 @@
       this.lastAlleyAt = 0;
       this.nightHordeToggle = false;
       this.preHoldRefill = false;
+      this.stormBannerSeen = false;
+      this.floodActive = false;
+      this.floodStrikeAt = 0;
+      this.floodStruck = false;
+      this.pendingFloodAt = 0;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2813,6 +2860,7 @@
         quiet: this.time < this.quietUntil,
         goldSafe: this.isGoldWindowProtected(),
         hold: this.namedKind === "hold" || this.holdStarted && this.time < this.holdUntil,
+        flood: this.floodActive,
         legalPage: this.legalPage,
         legalScroll: this.legalScroll,
         props: this.props.pool.active.map((p) => ({
@@ -2883,6 +2931,11 @@
       this.lastAlleyAt = 0;
       this.nightHordeToggle = false;
       this.preHoldRefill = false;
+      this.stormBannerSeen = false;
+      this.floodActive = false;
+      this.floodStrikeAt = 0;
+      this.floodStruck = false;
+      this.pendingFloodAt = 0;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -3077,8 +3130,8 @@
         });
         this.goldExpiresAt = this.time + GOLD_WINDOW_LIFE;
         this.goldWindowOpen = true;
-        this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.time + GOLD_WINDOW_LULL);
-        this.rightHoldUntil = Math.max(this.rightHoldUntil, this.time + GOLD_WINDOW_LULL);
+        this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.goldExpiresAt + 0.8);
+        this.rightHoldUntil = Math.max(this.rightHoldUntil, this.goldExpiresAt + 0.8);
         this.goldSafeUntil = Math.max(this.goldSafeUntil, this.goldExpiresAt + GOLD_CLOSE_BANNER);
         this.thinRightColumn();
         this.showNamed("gold", "\u53F3\u9053\xD72\uFF01\u5FEB\u5207", 2.8, void 0, true);
@@ -3102,6 +3155,20 @@
       let kept = 0;
       for (const e of list) {
         if (!e.alive || e.x <= 0.15) continue;
+        if (e.z < 18) continue;
+        if (e.z <= 52 && kept >= 1) {
+          this.particles.puff(e.x, 0.4, e.z, "#C9C0B0");
+          this.enemies.pool.release(e);
+          continue;
+        }
+        if (e.z <= 52) kept += 1;
+      }
+    }
+    thinLeftColumn() {
+      const list = this.enemies.pool.active.slice();
+      let kept = 0;
+      for (const e of list) {
+        if (!e.alive || e.x >= -0.15) continue;
         if (e.z < 18) continue;
         if (e.z <= 52 && kept >= 1) {
           this.particles.puff(e.x, 0.4, e.z, "#C9C0B0");
@@ -3159,9 +3226,9 @@
       if (exclusive) this.exclusiveUntil = Math.max(this.exclusiveUntil, this.namedUntil);
     }
     currentBanner() {
-      if (this.warningLane) return this.warningLane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01";
-      const exclusiveNamed = this.namedKind === "scene" || this.namedKind === "gold" || this.namedKind === "goldEnd" || this.namedKind === "hold" || this.namedKind === "storm";
+      const exclusiveNamed = this.namedKind === "scene" || this.namedKind === "gold" || this.namedKind === "goldEnd" || this.namedKind === "hold" || this.namedKind === "storm" || this.namedKind === "flood";
       if (exclusiveNamed && this.time < this.namedUntil && this.bannerText) return this.bannerText;
+      if (this.warningLane) return this.warningLane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01";
       if (this.rushActive) return "\u5DE6\u9053\u6765\u88AD\uFF01";
       if (this.namedKind && this.time < this.namedUntil && this.bannerText) return this.bannerText;
       return null;
@@ -3217,35 +3284,31 @@
       if (this.holdStarted || this.stormStarted || this.scene === "day" || this.scene === "storm") return;
       if (this.squad.count <= 0) return;
       if (this.nextHoldAt - this.time > HOLD_SETTLE || this.time > this.nextHoldAt + 0.05) return;
-      this.pushEventsPast(this.nextHoldAt + 0.8, true);
-      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.nextHoldAt);
-      this.quietUntil = Math.max(this.quietUntil, Math.min(this.nextHoldAt, this.time + 6));
+      this.pushEventsPast(this.nextHoldAt + HOLD_TELEGRAPH + HOLD_DURATION, true);
+      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.nextHoldAt + HOLD_TELEGRAPH + HOLD_DURATION);
+      this.quietUntil = Math.max(this.quietUntil, this.nextHoldAt + 1);
       if (this.warningLane) {
         this.warningLane = null;
-        this.scheduleNextWarning(this.nextHoldAt + 0.8);
+        this.scheduleNextWarning(this.nextHoldAt + HOLD_TELEGRAPH + 0.8);
       }
-      if (this.rushActive && !this.rushSpawned) {
+      if (this.rushActive) {
         this.rushActive = false;
         this.rushSpawned = false;
-        this.scheduleNextRush(this.nextHoldAt + 0.8);
+        this.scheduleNextRush(this.nextHoldAt + HOLD_TELEGRAPH + HOLD_DURATION + 0.8);
       }
+      this.thinLeftColumn();
       if (!this.preHoldRefill) {
         this.preHoldRefill = true;
-        const atCap = this.squad.count >= 20;
-        if (atCap) {
-          this.gates.spawn({ kind: "shield", lane: "mid", label: "\u62A4\u76FE", z: 36 });
-        } else {
-          const v = Math.max(2, lateRefillAmount(this.squad.count));
-          this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 36 });
-        }
+        this.spawnMidRefill(36);
       }
     }
     updateHold() {
       if (this.holdStarted) {
         if (this.time >= this.holdUntil) {
           this.holdStarted = false;
-          if (Math.abs(this.squad.x) > HOLD_MID && this.squad.count > 0) {
-            this.squad.lose(HOLD_DAMAGE);
+          const lost = holdDamageAt(this.squad.x);
+          if (lost > 0 && this.squad.count > 0) {
+            this.squad.lose(lost);
             this.shake = 0.32;
             this.audio.play("red");
           }
@@ -3273,12 +3336,15 @@
         if (!g.alive || g.kind === "amp" || g.kind === "red") continue;
         if (g.lane !== "mid" && g.z > 16) this.gates.pool.release(g);
       }
+      this.spawnMidRefill(38);
+    }
+    spawnMidRefill(z) {
       const atCap = this.squad.count >= 20;
       if (atCap) {
-        this.gates.spawn({ kind: "shield", lane: "mid", label: "\u62A4\u76FE", z: 38 });
+        this.gates.spawn({ kind: "shield", lane: "mid", label: "\u62A4\u76FE", z });
       } else {
-        const v = Math.max(LATE_REFILL_LOW, lateRefillAmount(this.squad.count));
-        this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 38 });
+        const v = Math.max(HOLD_REFILL, lateRefillAmount(this.squad.count));
+        this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z });
       }
     }
     beginStormChapter() {
@@ -3290,18 +3356,56 @@
       this.squad.grantShield(NIGHT_SHIELD_DURATION);
       this.pushEventsPast(this.nextStormAt + 2);
       this.thinRightColumn();
+      this.thinLeftColumn();
+      if (this.squad.count < 6) this.spawnMidRefill(36);
     }
     updateStorm() {
       if (this.namedKind === "storm" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
-        this.spawnStormPack();
         this.namedSpawned = true;
+      }
+      if (this.pendingFloodAt > 0 && this.time >= this.pendingFloodAt && this.squad.count > 0) {
+        this.pendingFloodAt = 0;
+        this.floodActive = true;
+        this.floodStruck = false;
+        this.floodStrikeAt = this.time + FLOOD_TELEGRAPH;
+        this.showNamed("flood", "\u4E3B\u8DEF\u79EF\u6C34\uFF01\u5FEB\u9760\u8FB9\uFF01", FLOOD_TELEGRAPH + FLOOD_DURATION, this.floodStrikeAt, true);
+      }
+      if (this.namedKind === "flood" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+        this.spawnFloodPack();
+        this.namedSpawned = true;
+      }
+      if (this.floodActive && !this.floodStruck && this.time >= this.floodStrikeAt) {
+        this.floodStruck = true;
+        if (Math.abs(this.squad.x) < FLOOD_MID && this.squad.count > 0) {
+          this.squad.lose(FLOOD_DAMAGE);
+          this.shake = 0.3;
+          this.audio.play("red");
+        }
+      }
+      if (this.floodActive && this.time >= this.floodStrikeAt + FLOOD_DURATION) {
+        this.floodActive = false;
       }
       if (!this.stormStarted || this.scene !== "storm") return;
       if (this.namedKind || this.warningLane || this.rushActive) return;
       if (this.time < this.exclusiveUntil || this.isGoldWindowProtected()) return;
       if (this.time < this.nextStormAt || this.squad.count <= 0) return;
-      this.showNamed("storm", "\u96E8\u591C\u63A8\u8FDB\uFF01", STORM_TELEGRAPH + STORM_BANNER, this.time + STORM_TELEGRAPH, true);
+      const first = !this.stormBannerSeen;
+      const tele = first ? STORM_TELEGRAPH_FIRST : STORM_TELEGRAPH;
+      const banner = first ? STORM_BANNER_FIRST : STORM_BANNER;
+      this.stormBannerSeen = true;
+      this.showNamed("storm", "\u96E8\u591C\u63A8\u8FDB\uFF01", tele + banner, this.time + tele, true);
+      this.pendingFloodAt = this.time + tele + banner;
       this.nextStormAt = this.time + STORM_PERIOD;
+    }
+    spawnFloodPack() {
+      const types = this.time >= 200 ? ["jumper", "splitter", "shield"] : ["jumper", "walker", "sprinter"];
+      for (let i = 0; i < types.length; i++) {
+        this.spawnEnemy(types[i], "mid", {
+          z: ALLEY_SPAWN_Z - i * 1.25,
+          x: (i - 1) * 0.35,
+          driftX: 0
+        });
+      }
     }
     spawnStormPack() {
       const types = this.time >= 200 ? ["bomber", "jumper", "shield", "splitter"] : ["jumper", "sprinter", "bomber", "walker"];
@@ -3392,12 +3496,12 @@
           this.nextWarningAt = Math.max(this.nextWarningAt, Math.max(this.time, this.nextAlleyAt) + EVENT_GAP);
           return;
         }
-        const lane = laneOfX(this.squad.x);
-        if (lane === "right" && (this.isGoldWindowProtected() || this.goldDueSoon(5) || this.pendingGoldClose)) {
+        if (this.isGoldWindowProtected() || this.goldDueSoon(5) || this.pendingGoldClose) {
           const until = Math.max(this.goldSafeUntil, this.time);
           this.nextWarningAt = until + (this.goldDueSoon(5) ? GOLD_WINDOW_LIFE + GOLD_CLOSE_BANNER + 1 : 0.6);
           return;
         }
+        const lane = laneOfX(this.squad.x);
         this.warningLane = lane;
         this.warningImpactAt = this.time + WARNING_TELEGRAPH;
       }
@@ -3444,6 +3548,11 @@
         return;
       }
       if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
+        const nearHold = !this.stormStarted && this.scene !== "day" && (this.holdStarted || this.nextHoldAt - this.time <= HOLD_SETTLE && this.nextHoldAt + 1 >= this.time);
+        if (nearHold) {
+          this.nextRushAt = this.nextHoldAt + HOLD_TELEGRAPH + HOLD_DURATION + 1.2;
+          return;
+        }
         if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
           this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
           return;
@@ -3476,6 +3585,7 @@
           }
           continue;
         }
+        if (g.lane === "mid") continue;
         if (this.time >= OPENING_END && (g.kind === "add" || g.kind === "mul" || g.kind === "shield")) {
           const v = lateRefillAmount(this.squad.count);
           g.kind = "add";
@@ -3682,11 +3792,17 @@
           this.squad.grantShield(SHIELD_GATE_DURATION);
           this.audio.play("gate");
         } else if (id === "heavy") {
-          const keep = this.squad.weapon === "heavy" ? this.squad.weaponTime : 0;
-          const lockLeft = Math.max(0, SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - this.time);
-          this.squad.equip("heavy");
-          this.squad.weaponTime = Math.max(this.squad.weaponTime, keep, lockLeft);
-          this.audio.play("weapon");
+          const lockLeft = SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - this.time;
+          if (this.time >= SCENE_SHIFT_AT && lockLeft > 0) {
+            if (this.squad.weapon !== "heavy") {
+              this.squad.equip("heavy");
+              this.squad.weaponTime = lockLeft;
+            }
+            this.audio.play("weapon");
+          } else {
+            this.squad.equip("heavy");
+            this.audio.play("weapon");
+          }
         } else {
           this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
           this.audio.play("weapon");
@@ -3804,7 +3920,7 @@
       const camX = this.squad.x * 0.32;
       const sh = this.shake > 0 ? (Math.random() * 2 - 1) * 10 * this.shake : 0;
       const sv = this.shake > 0 ? (Math.random() * 2 - 1) * 8 * this.shake : 0;
-      drawWorld(ctx, camX, this.animTime, sh, sv, this.scene, this.namedKind === "hold" || this.holdStarted && this.time < this.holdUntil);
+      drawWorld(ctx, camX, this.animTime, sh, sv, this.scene, this.namedKind === "hold" || this.holdStarted && this.time < this.holdUntil, this.floodActive);
       const items = [];
       if (this.warningLane && this.state === "playing") {
         items.push({

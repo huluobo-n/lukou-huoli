@@ -61,6 +61,7 @@ export function drawWorld(
   shakeY: number,
   scene: SceneId = "day",
   hold = false,
+  flood = false,
 ): void {
   ctx.save();
   ctx.translate(shakeX, shakeY);
@@ -87,6 +88,7 @@ export function drawWorld(
   drawRoad(ctx, camX, time, scene);
   if (isNight(scene)) drawCrossAlley(ctx, camX, time);
   if (scene === "fork") drawForkPlaza(ctx, camX, time, hold);
+  if (flood) drawFloodMid(ctx, camX, time);
   drawRoadside(ctx, camX, time, scene);
   if (isNight(scene)) drawLamps(ctx, camX, time);
   if (scene === "storm") drawRain(ctx, time);
@@ -207,6 +209,35 @@ function drawMedian(ctx: CanvasRenderingContext2D, camX: number, half: number, c
   ctx.lineTo(nearL.sx, nearL.sy);
   ctx.closePath();
   ctx.fill();
+}
+
+
+function drawFloodMid(ctx: CanvasRenderingContext2D, camX: number, time: number): void {
+  const half = 1.35;
+  const farL = pr(-half, 0.05, SPAWN_Z + 8, camX);
+  const farR = pr(half, 0.05, SPAWN_Z + 8, camX);
+  const nearL = pr(-half, 0.05, 8.5, camX);
+  const nearR = pr(half, 0.05, 8.5, camX);
+  const pulse = 0.34 + 0.08 * Math.sin(time * 7);
+  ctx.fillStyle = "rgba(40, 90, 150, " + pulse.toFixed(3) + ")";
+  ctx.beginPath();
+  ctx.moveTo(farL.sx, farL.sy);
+  ctx.lineTo(farR.sx, farR.sy);
+  ctx.lineTo(nearR.sx, nearR.sy);
+  ctx.lineTo(nearL.sx, nearL.sy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(160, 210, 255, 0.28)";
+  for (let i = 0; i < 6; i++) {
+    const z = 12 + ((time * 10 + i * 7) % 36);
+    const a = pr(-half + 0.15, 0.08, z, camX);
+    const b = pr(half - 0.15, 0.08, z + 1.1, camX);
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(time * 5 + i);
+    ctx.beginPath();
+    ctx.ellipse((a.sx + b.sx) / 2, (a.sy + b.sy) / 2, Math.max(8, (b.sx - a.sx) * 0.28), Math.max(3, a.scale * 3.5), 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawForkPlaza(ctx: CanvasRenderingContext2D, camX: number, time: number, hold: boolean): void {
