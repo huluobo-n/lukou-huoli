@@ -12,8 +12,10 @@ import {
   SPAWN_Z,
   TEAM_Z,
   WEAPONS,
+  type SceneId,
   type WeaponId,
 } from "./config";
+import { legalParagraphs, type LegalPage } from "./legal";
 import {
   drawSprite,
   getSprite,
@@ -43,6 +45,13 @@ export function pr(x: number, y: number, z: number, camX: number) {
 
 const TREE_ZS = [15, 20, 25, 31, 37, 44, 51, 58, 66, 74, 83];
 const HOUSE_ZS = [17, 26, 35, 44, 53, 62, 71, 81];
+const NIGHT_TREE_ZS = [18, 29, 48, 67, 86];
+const NIGHT_HOUSE_ZS = [14, 21, 31, 41, 50, 61, 73, 88];
+const FORK_HOUSE_ZS = [16, 28, 40, 55, 69, 84];
+
+function isNight(scene: SceneId): boolean {
+  return scene === "night" || scene === "fork";
+}
 
 export function drawWorld(
   ctx: CanvasRenderingContext2D,
@@ -50,7 +59,8 @@ export function drawWorld(
   time: number,
   shakeX: number,
   shakeY: number,
-  scene: "day" | "night" = "day",
+  scene: SceneId = "day",
+  hold = false,
 ): void {
   ctx.save();
   ctx.translate(shakeX, shakeY);
@@ -58,7 +68,11 @@ export function drawWorld(
   drawSky(ctx, camX, scene);
 
   const grass = ctx.createLinearGradient(0, HORIZON_Y, 0, CANVAS_H);
-  if (scene === "night") {
+  if (scene === "fork") {
+    grass.addColorStop(0, "#2E3A4E");
+    grass.addColorStop(0.45, "#243446");
+    grass.addColorStop(1, "#1C2A38");
+  } else if (scene === "night") {
     grass.addColorStop(0, "#3A4A5A");
     grass.addColorStop(0.45, "#2C3C3A");
     grass.addColorStop(1, "#24342C");
@@ -71,14 +85,15 @@ export function drawWorld(
   ctx.fillRect(0, HORIZON_Y + 6, CANVAS_W, CANVAS_H - HORIZON_Y);
 
   drawRoad(ctx, camX, time, scene);
-  if (scene === "night") drawCrossAlley(ctx, camX, time);
+  if (isNight(scene)) drawCrossAlley(ctx, camX, time);
+  if (scene === "fork") drawForkPlaza(ctx, camX, time, hold);
   drawRoadside(ctx, camX, time, scene);
-  if (scene === "night") drawLamps(ctx, camX, time);
+  if (isNight(scene)) drawLamps(ctx, camX, time);
 
   ctx.restore();
 }
 
-function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: "day" | "night" = "day"): void {
+function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: SceneId = "day"): void {
   const sky = getSprite("sky");
   const horizon = HORIZON_Y + 52;
   if (sky) {
@@ -99,8 +114,8 @@ function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: "day" | "ni
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, CANVAS_W, horizon + 20);
   }
-  if (scene === "night") {
-    ctx.fillStyle = "rgba(18, 24, 48, 0.55)";
+  if (isNight(scene)) {
+    ctx.fillStyle = scene === "fork" ? "rgba(10, 16, 40, 0.62)" : "rgba(18, 24, 48, 0.55)";
     ctx.fillRect(0, 0, CANVAS_W, horizon + 24);
     // 几颗小星星
     ctx.fillStyle = "rgba(255,245,210,0.8)";
@@ -114,7 +129,7 @@ function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: "day" | "ni
   }
 }
 
-function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: "day" | "night" = "day"): void {
+function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: SceneId = "day"): void {
   const far = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const farR = pr(ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const near = pr(-ROAD_HALF, 0, 8.5, camX);
@@ -155,7 +170,62 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, sce
   ctx.fill();
 
   // 中线虚线随道路向前滚（速度沿用 BASE_SPEED，只改外观）
-  drawDashLine(ctx, 0, camX, scene === "night" ? "#D6C98A" : "#F3EEDC", 7, time);
+  if (scene === "day") {
+    drawDashLine(ctx, 0, camX, "#F3EEDC", 7, time);
+  } else if (scene === "night") {
+    // 夜路口改成双向分隔带，不再是同一条居中虚线
+    drawMedian(ctx, camX, 0.7, "#5C6574");
+    drawDashLine(ctx, -2.15, camX, "#D6C98A", 5, time);
+    drawDashLine(ctx, 2.15, camX, "#D6C98A", 5, time);
+  } else {
+    drawMedian(ctx, camX, 1.35, "#6A5A3A");
+    drawDashLine(ctx, -2.55, camX, "#E8D48A", 5, time);
+    drawDashLine(ctx, 2.55, camX, "#E8D48A", 5, time);
+    drawDashLine(ctx, 0, camX, "#F4E7B0", 6, time);
+  }
+}
+
+function drawMedian(ctx: CanvasRenderingContext2D, camX: number, half: number, color: string): void {
+  const farL = pr(-half, 0.02, SPAWN_Z + 10, camX);
+  const farR = pr(half, 0.02, SPAWN_Z + 10, camX);
+  const nearL = pr(-half, 0.02, 8.5, camX);
+  const nearR = pr(half, 0.02, 8.5, camX);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(farL.sx, farL.sy);
+  ctx.lineTo(farR.sx, farR.sy);
+  ctx.lineTo(nearR.sx, nearR.sy);
+  ctx.lineTo(nearL.sx, nearL.sy);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawForkPlaza(ctx: CanvasRenderingContext2D, camX: number, time: number, hold: boolean): void {
+  const z = wrapZ(30, time * 0.08, 18, 50);
+  const tip = pr(0, 0.04, z + 6, camX);
+  const left = pr(-3.4, 0.04, z - 1.5, camX);
+  const right = pr(3.4, 0.04, z - 1.5, camX);
+  ctx.fillStyle = hold ? "rgba(232, 200, 90, 0.42)" : "rgba(160, 140, 90, 0.35)";
+  ctx.beginPath();
+  ctx.moveTo(tip.sx, tip.sy);
+  ctx.lineTo(left.sx, left.sy);
+  ctx.lineTo(right.sx, right.sy);
+  ctx.closePath();
+  ctx.fill();
+  if (hold) {
+    ctx.fillStyle = "rgba(255, 220, 110, 0.22)";
+    const a = pr(-1.2, 0.03, SPAWN_Z + 6, camX);
+    const b = pr(1.2, 0.03, SPAWN_Z + 6, camX);
+    const c = pr(1.2, 0.03, 9, camX);
+    const d = pr(-1.2, 0.03, 9, camX);
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.lineTo(c.sx, c.sy);
+    ctx.lineTo(d.sx, d.sy);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 function wrapZ(base: number, time: number, minZ: number, maxZ: number): number {
@@ -242,19 +312,28 @@ function drawLamps(ctx: CanvasRenderingContext2D, camX: number, time: number): v
   }
 }
 
-function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: "day" | "night" = "day"): void {
+function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: SceneId = "day"): void {
   type Prop = { kind: "tree" | "house"; side: -1 | 1; z: number; variant: number };
   const props: Prop[] = [];
-  for (let i = 0; i < TREE_ZS.length; i++) {
-    props.push({ kind: "tree", side: -1, z: wrapZ(TREE_ZS[i], time, 11, 92), variant: i % 2 });
-    props.push({ kind: "tree", side: 1, z: wrapZ(TREE_ZS[i] + 3.4, time, 11, 92), variant: (i + 1) % 2 });
+  const trees = scene === "day" ? TREE_ZS : scene === "night" ? NIGHT_TREE_ZS : [];
+  const houses = scene === "day" ? HOUSE_ZS : scene === "night" ? NIGHT_HOUSE_ZS : FORK_HOUSE_ZS;
+  const treeSpan = scene === "night" ? 100 : 92;
+  const houseSpan = scene === "fork" ? 102 : 94;
+  for (let i = 0; i < trees.length; i++) {
+    props.push({ kind: "tree", side: -1, z: wrapZ(trees[i], time, 11, treeSpan), variant: i % 2 });
+    if (scene === "day") {
+      props.push({ kind: "tree", side: 1, z: wrapZ(trees[i] + 3.4, time, 11, treeSpan), variant: (i + 1) % 2 });
+    }
   }
-  for (let i = 0; i < HOUSE_ZS.length; i++) {
-    props.push({ kind: "house", side: -1, z: wrapZ(HOUSE_ZS[i], time, 14, 94), variant: i % 4 });
-    props.push({ kind: "house", side: 1, z: wrapZ(HOUSE_ZS[i] + 5.5, time, 14, 94), variant: (i + 2) % 4 });
+  for (let i = 0; i < houses.length; i++) {
+    const off = scene === "night" ? 7.2 : scene === "fork" ? 9.0 : 5.5;
+    props.push({ kind: "house", side: -1, z: wrapZ(houses[i], time, 14, houseSpan), variant: scene === "day" ? i % 4 : (i + 1) % 4 });
+    props.push({ kind: "house", side: 1, z: wrapZ(houses[i] + off, time, 14, houseSpan), variant: (i + 2) % 4 });
   }
+  const alleyZ = isNight(scene) ? wrapZ(38, time * 0.15, 22, 52) : -99;
   props.sort((a, b) => b.z - a.z);
   for (const p of props) {
+    if (Math.abs(p.z - alleyZ) < 4.5) continue;
     if (p.kind === "tree") {
       const x = p.side < 0 ? -ROAD_HALF - 1.85 : ROAD_HALF + 1.9;
       const q = pr(x, 0, p.z, camX);
@@ -263,12 +342,14 @@ function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number,
       const id: SpriteId = p.variant === 0 ? "tree_0" : "tree_1";
       drawSprite(ctx, id, q.sx, q.sy + 4 * k, 170 * k, { flip: p.side > 0 });
     } else {
-      const x = p.side < 0 ? -ROAD_HALF - 4.35 : ROAD_HALF + 4.45;
+      const inset = scene === "fork" ? 5.6 : scene === "night" ? 3.55 : 4.35;
+      const x = p.side < 0 ? -ROAD_HALF - inset : ROAD_HALF + inset + 0.1;
       const q = pr(x, 0, p.z, camX);
       const k = q.scale;
       if (k < 0.08) continue;
       const id = ("house_" + p.variant) as SpriteId;
-      drawSprite(ctx, id, q.sx, q.sy + 6 * k, 230 * k, { flip: p.side > 0 });
+      const h = scene === "night" ? 250 * k : scene === "fork" ? 260 * k : 230 * k;
+      drawSprite(ctx, id, q.sx, q.sy + 6 * k, h, { flip: p.side > 0 });
     }
   }
 }
@@ -512,7 +593,7 @@ export function drawLaneWarning(
   lane: "left" | "right" | "mid",
   camX: number,
   timeLeft: number,
-  kind: "warn" | "rush" | "alley" = "warn",
+  kind: "warn" | "rush" | "alley" | "hold" = "warn",
 ): void {
   const x = lane === "mid" ? 0 : lane === "left" ? -LANE_X : LANE_X;
   const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
@@ -526,7 +607,9 @@ export function drawLaneWarning(
     ? `rgba(210, 128, 32, ${alpha})`
     : kind === "alley"
       ? `rgba(120, 80, 200, ${alpha})`
-      : `rgba(210, 48, 40, ${alpha})`;
+      : kind === "hold"
+        ? `rgba(230, 190, 70, ${alpha + 0.08})`
+        : `rgba(210, 48, 40, ${alpha})`;
   ctx.beginPath();
   ctx.moveTo(farL.sx, farL.sy);
   ctx.lineTo(farR.sx, farR.sy);
@@ -976,34 +1059,66 @@ export function titleHit(x: number, y: number): "start" | "legal" | null {
   return null;
 }
 
-export function drawLegal(ctx: CanvasRenderingContext2D): void {
-  dim(ctx);
-  ctx.fillStyle = "rgba(255,248,230,0.97)";
-  roundRect(ctx, 70, 280, CANVAS_W - 140, 640, 22);
-  ctx.fill();
-  ctx.fillStyle = "#5A3E22";
-  ctx.textAlign = "center";
-  ctx.font = 'bold 30px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.fillText("隐私政策与适龄提示", CANVAS_W / 2, 350);
-  ctx.font = '20px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.fillStyle = "rgba(90,62,34,0.88)";
-  const lines = [
-    "本页为占位说明，正式上架前将替换为完整文案。",
-    "本游戏为休闲射击，适合 12 岁及以上玩家。",
-    "不收集个人身份信息，成绩仅保存在本地。",
-    "不含内购。广告能力本版本关闭。",
-    "请合理安排游戏时间。",
-  ];
-  let y = 420;
-  for (const line of lines) {
-    wrapText(ctx, line, CANVAS_W / 2, y, CANVAS_W - 220, 32);
-    y += 70;
+const LEGAL_BACK_Y = CANVAS_H - 132;
+const LEGAL_LINK_Y = CANVAS_H - 214;
+
+export function legalMaxScroll(page: LegalPage): number {
+  const { lines } = legalParagraphs(page);
+  const charsPerLine = page === "summary" ? 16 : 20;
+  let h = 0;
+  for (const para of lines) {
+    const rows = Math.max(1, Math.ceil(para.length / charsPerLine));
+    h += rows * 34 + 14;
   }
-  drawButton(ctx, CANVAS_W / 2 - 110, 800, 220, 64, "#6B8F3A", "返回");
+  const view = page === "summary" ? CANVAS_H - 430 : CANVAS_H - 360;
+  return Math.max(0, h - view);
 }
 
-export function legalHit(x: number, y: number): boolean {
-  return x >= CANVAS_W / 2 - 110 && x <= CANVAS_W / 2 + 110 && y >= 800 && y <= 864;
+export function drawLegal(ctx: CanvasRenderingContext2D, page: LegalPage = "summary", scrollY = 0): void {
+  dim(ctx);
+  const boxY = 70;
+  const boxH = CANVAS_H - 70 - 36;
+  ctx.fillStyle = "rgba(255,248,230,0.97)";
+  roundRect(ctx, 48, boxY, CANVAS_W - 96, boxH, 22);
+  ctx.fill();
+
+  const { title, lines } = legalParagraphs(page);
+  ctx.fillStyle = "#5A3E22";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = 'bold 32px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText(title, CANVAS_W / 2, 128);
+
+  const clipTop = 150;
+  const clipBottom = page === "summary" ? LEGAL_LINK_Y - 16 : LEGAL_BACK_Y - 16;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(70, clipTop, CANVAS_W - 140, clipBottom - clipTop);
+  ctx.clip();
+  ctx.font = '20px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
+  ctx.fillStyle = "rgba(90,62,34,0.9)";
+  ctx.textAlign = "left";
+  let y = clipTop + 28 + scrollY;
+  const maxW = CANVAS_W - 200;
+  for (const para of lines) {
+    y = wrapTextLeft(ctx, para, 100, y, maxW, 32) + 14;
+  }
+  ctx.restore();
+
+  if (page === "summary") {
+    drawButton(ctx, 80, LEGAL_LINK_Y, 250, 58, "#6B8F3A", "隐私政策");
+    drawButton(ctx, CANVAS_W - 80 - 250, LEGAL_LINK_Y, 250, 58, "#6B8F3A", "适龄提示");
+  }
+  drawButton(ctx, CANVAS_W / 2 - 110, LEGAL_BACK_Y, 220, 64, "#6B8F3A", "返回");
+}
+
+export function legalHit(x: number, y: number, page: LegalPage = "summary"): "back" | "privacy" | "age" | null {
+  if (x >= CANVAS_W / 2 - 110 && x <= CANVAS_W / 2 + 110 && y >= LEGAL_BACK_Y && y <= LEGAL_BACK_Y + 64) return "back";
+  if (page === "summary") {
+    if (x >= 80 && x <= 330 && y >= LEGAL_LINK_Y && y <= LEGAL_LINK_Y + 58) return "privacy";
+    if (x >= CANVAS_W - 80 - 250 && x <= CANVAS_W - 80 && y >= LEGAL_LINK_Y && y <= LEGAL_LINK_Y + 58) return "age";
+  }
+  return null;
 }
 
 export function drawResult(
@@ -1102,5 +1217,35 @@ function wrapText(
     }
   }
   if (line) ctx.fillText(line, x, yy);
+}
+
+function wrapTextLeft(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxW: number,
+  lineH: number,
+): number {
+  const chars = text.split("");
+  let line = "";
+  let yy = y;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  for (const ch of chars) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, x, yy);
+      line = ch;
+      yy += lineH;
+    } else {
+      line = test;
+    }
+  }
+  if (line) {
+    ctx.fillText(line, x, yy);
+    yy += lineH;
+  }
+  return yy;
 }
 

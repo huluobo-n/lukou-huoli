@@ -1,12 +1,13 @@
 import {
   ALLEY_BANNER,
+  ALLEY_SIDE_X,
   ALLEY_SPAWN_Z,
   ALLEY_TELEGRAPH,
   BARREL_AOE_DAMAGE,
   BARREL_AOE_RADIUS,
   BARREL_CONTACT_LOSS,
-  CAGE_REWARD,
   ENDLESS_GATE_PERIOD,
+  ENDLESS_GATE_PERIOD_LATE,
   ENDLESS_GATE_START,
   ENDLESS_MIX,
   ENDLESS_PROP_PERIOD,
@@ -17,15 +18,23 @@ import {
   GOLD_GATE_LIFE,
   GOLD_GATE_Z,
   GOLD_NEAR_MUL,
+  GOLD_CLOSE_BANNER,
   GOLD_WINDOW_LIFE,
   GOLD_WINDOW_LULL,
+  GOLD_WINDOW_SAFE,
   GOLD_WINDOW_Z,
+  HOLD_DAMAGE,
+  HOLD_DURATION,
+  HOLD_MID,
+  HOLD_TELEGRAPH,
   LANE_HALF,
   LANE_X,
   MAX_SQUAD,
   MERCY_AT,
   MERCY_MAX_COUNT,
   MERCY_Z,
+  NIGHT_SHIELD_DURATION,
+  NIGHT_WEAPON_MIN,
   PINCER_BANNER,
   PINCER_TELEGRAPH,
   PROP_EVENTS,
@@ -34,6 +43,7 @@ import {
   RUSH_QUIET,
   RUSH_SPAWN_Z,
   RUSH_TELEGRAPH,
+  SCENE_BANNER,
   SCENE_SHIFT_AT,
   SCRIPT_ENEMY_END,
   SHIELD_GATE_DURATION,
@@ -42,11 +52,15 @@ import {
   WARNING_DAMAGE,
   WARNING_FIRST,
   WARNING_TELEGRAPH,
+  alleyBannerText,
+  alleySide,
   alleyTime,
+  cageRewardAt,
   enemyHpMul,
   endlessGateFor,
   endlessHordeInterval,
   goldWindowTime,
+  holdTime,
   inLane,
   inRightLaneGap,
   laneCenterX,
@@ -54,8 +68,10 @@ import {
   pincerTime,
   rushPack,
   rushPeriod,
+  softenGate,
   warningPeriod,
   type EnemyId,
+  type SceneId,
   type TimelineEvent,
   type WeaponId,
 } from "./config";
@@ -83,9 +99,11 @@ import {
   drawWorld,
   hitMute,
   legalHit,
+  legalMaxScroll,
   resultHit,
   titleHit,
 } from "./render";
+import type { LegalPage } from "./legal";
 import { Squad } from "./squad";
 import { loadBest, saveBest, type BestRecord } from "./storage";
 
@@ -109,9 +127,13 @@ export interface PublicState {
   warning: { lane: "left" | "right"; timeLeft: number; text: string } | null;
   rush: { timeLeft: number; spawned: boolean } | null;
   banner: { text: string } | null;
-  scene: "day" | "night";
+  scene: SceneId;
   shieldTime: number;
   quiet: boolean;
+  goldSafe: boolean;
+  hold: boolean;
+  legalPage: LegalPage;
+  legalScroll: number;
   props: { kind: string; lane: string; z: number; hp: number }[];
 }
 
@@ -153,14 +175,16 @@ export class Game {
   rushSpawned = false;
   private nextRushAt = 0;
   runSeed = 1;
-  scene: "day" | "night" = "day";
+  scene: SceneId = "day";
   bannerText: string | null = null;
+  legalPage: LegalPage = "summary";
+  legalScroll = 0;
   private firstRushDone = false;
   private quietUntil = 0;
   private mercySpawned = false;
   private goldExpiresAt = 0;
   private nextGoldWindowI = 0;
-  private namedKind: "pincer" | "alley" | "gold" | "scene" | null = null;
+  private namedKind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold" | null = null;
   private namedSpawnAt = 0;
   private namedUntil = 0;
   private namedSpawned = false;
@@ -168,6 +192,14 @@ export class Game {
   private nextAlleyI = 0;
   private nextPincerAt = 0;
   private nextAlleyAt = 0;
+  private exclusiveUntil = 0;
+  private goldSafeUntil = 0;
+  private rightHoldUntil = 0;
+  private goldWindowOpen = false;
+  private holdStarted = false;
+  private holdUntil = 0;
+  private nextHoldAt = 0;
+  private alleyFacing: "both" | "left" | "right" = "both";
   paused = false;
   private running = false;
   private lastTs = 0;
@@ -255,6 +287,10 @@ export class Game {
       scene: this.scene,
       shieldTime: this.squad.shieldTime,
       quiet: this.time < this.quietUntil,
+      goldSafe: this.time < this.goldSafeUntil,
+      hold: this.namedKind === "hold" || (this.holdStarted && this.time < this.holdUntil),
+      legalPage: this.legalPage,
+      legalScroll: this.legalScroll,
       props: this.props.pool.active.map((p) => ({
         kind: p.kind,
         lane: p.lane,
@@ -306,6 +342,14 @@ export class Game {
     this.nextAlleyI = 0;
     this.nextPincerAt = pincerTime(0, this.runSeed);
     this.nextAlleyAt = alleyTime(0, this.runSeed);
+    this.exclusiveUntil = 0;
+    this.goldSafeUntil = 0;
+    this.rightHoldUntil = 0;
+    this.goldWindowOpen = false;
+    this.holdStarted = false;
+    this.holdUntil = 0;
+    this.nextHoldAt = holdTime(this.runSeed);
+    this.alleyFacing = "both";
     this.spawned.length = 0;
     this.squad.reset();
     this.enemies.clear();
@@ -322,6 +366,13 @@ export class Game {
   private update(dt: number): void {
     const clicks = this.input.consumeClicks();
     for (const c of clicks) this.handleClick(c.x, c.y);
+
+    if (this.state === "legal") {
+      this.legalScroll += this.input.consumeScroll(dt);
+      const max = legalMaxScroll(this.legalPage);
+      if (this.legalScroll > 0) this.legalScroll = 0;
+      if (this.legalScroll < -max) this.legalScroll = -max;
+    }
 
     if (this.state !== "playing") return;
 
@@ -344,9 +395,11 @@ export class Game {
     this.updateRush();
     this.updateNamed();
     this.updateAlleyDrift();
+    this.updateHold();
     this.gates.update(dt);
     this.props.update(dt);
-    this.enemies.update(dt);
+    const rightMul = this.time < this.rightHoldUntil ? 0 : 1;
+    this.enemies.update(dt, rightMul);
     this.shoot(dt);
     this.bullets.update(dt);
     this.collideBullets();
@@ -364,9 +417,10 @@ export class Game {
 
   private spawnDue(): void {
     const quiet = this.time < this.quietUntil;
+    const holdRight = this.time < this.hordeSkipUntil || this.time < this.rightHoldUntil;
     while (this.cursor < TIMELINE.length && TIMELINE[this.cursor].time <= this.time) {
       const ev = TIMELINE[this.cursor++];
-      if (quiet && ev.kind === "enemy") continue;
+      if (ev.kind === "enemy" && (quiet || (holdRight && ev.lane === "right"))) continue;
       this.applyEvent(ev);
       this.spawned.push(ev);
     }
@@ -387,7 +441,8 @@ export class Game {
     }
     while (this.time >= this.nextGateAt) {
       const t = this.nextGateAt;
-      const ev = endlessGateFor(this.endlessGateI, this.runSeed);
+      const raw = endlessGateFor(this.endlessGateI, this.runSeed);
+      const ev = softenGate(raw, t, this.squad.count, this.squad.peak);
       const pair = this.endlessGateI % 4 === 3;
       const pairKey = pair ? this.gates.nextPairKey() : 0;
       this.gates.spawn({
@@ -409,7 +464,7 @@ export class Game {
         this.hordeSkipUntil = t + 1.3;
       }
       this.endlessGateI += 1;
-      this.nextGateAt += ENDLESS_GATE_PERIOD;
+      this.nextGateAt += t >= SCENE_SHIFT_AT ? ENDLESS_GATE_PERIOD_LATE : ENDLESS_GATE_PERIOD;
     }
   }
 
@@ -455,16 +510,25 @@ export class Game {
       this.goldExpiresAt = GOLD_GATE_AT + GOLD_GATE_LIFE;
     }
     if (this.goldExpiresAt > 0 && this.time >= this.goldExpiresAt) {
+      const wasWindow = this.goldWindowOpen;
       this.clearAmpGates();
       this.goldExpiresAt = 0;
+      this.goldWindowOpen = false;
       if (this.namedKind === "gold") {
         this.namedKind = null;
         this.bannerText = null;
       }
+      if (wasWindow && this.time >= this.exclusiveUntil) {
+        this.showNamed("goldEnd", "金门关闭！", GOLD_CLOSE_BANNER, undefined, true);
+      }
     }
     const due = goldWindowTime(this.nextGoldWindowI, this.runSeed);
     if (this.time >= due && this.time >= GOLD_GATE_AT + GOLD_GATE_LIFE) {
-      if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") {
+      if (this.time < this.exclusiveUntil) return;
+      if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley" || this.namedKind === "hold") {
+        return;
+      }
+      if (this.nextPincerAt - this.time < 4.2 && this.nextPincerAt >= this.time - 0.2) {
         return;
       }
       this.nextGoldWindowI += 1;
@@ -477,8 +541,27 @@ export class Game {
         stationary: true,
       });
       this.goldExpiresAt = this.time + GOLD_WINDOW_LIFE;
+      this.goldWindowOpen = true;
       this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.time + GOLD_WINDOW_LULL);
-      this.showNamed("gold", "右道×2！快切", 2.8);
+      this.rightHoldUntil = Math.max(this.rightHoldUntil, this.time + GOLD_WINDOW_LULL);
+      this.goldSafeUntil = Math.max(this.goldSafeUntil, this.time + GOLD_WINDOW_SAFE);
+      this.thinRightColumn();
+      this.showNamed("gold", "右道×2！快切", 2.8, undefined, true);
+    }
+  }
+
+  private thinRightColumn(): void {
+    const list = this.enemies.pool.active.slice();
+    let kept = 0;
+    for (const e of list) {
+      if (!e.alive || e.x <= 0.15) continue;
+      if (e.z < 18) continue;
+      if (e.z <= 52 && kept >= 1) {
+        this.particles.puff(e.x, 0.4, e.z, "#C9C0B0");
+        this.enemies.pool.release(e);
+        continue;
+      }
+      if (e.z <= 52) kept += 1;
     }
   }
 
@@ -492,21 +575,49 @@ export class Game {
   private updateScene(): void {
     if (this.scene === "day" && this.time >= SCENE_SHIFT_AT) {
       this.scene = "night";
-      if (!this.warningLane && !this.rushActive && !this.namedKind) {
-        this.showNamed("scene", "进入夜路口！", 2.4);
-      }
+      this.grantNightStart();
+      this.pushEventsPast(this.time + SCENE_BANNER + 1.6);
+      this.showNamed("scene", "进入夜路口！", SCENE_BANNER, undefined, true);
     }
   }
 
-  private showNamed(kind: "pincer" | "alley" | "gold" | "scene", text: string, duration: number, spawnAt?: number): void {
+  private grantNightStart(): void {
+    if (this.squad.weapon === "pistol" || this.squad.weaponTime < NIGHT_WEAPON_MIN) {
+      this.squad.equip("heavy");
+    }
+    this.squad.grantShield(NIGHT_SHIELD_DURATION);
+  }
+
+  private pushEventsPast(until: number): void {
+    if (this.nextWarningAt < until) this.nextWarningAt = until + 0.4;
+    if (this.nextRushAt < until) this.nextRushAt = until + 0.8;
+    if (this.nextPincerAt < until) this.nextPincerAt = until + 1.2;
+    if (this.nextAlleyAt < until) this.nextAlleyAt = until + 1.8;
+    if (this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
+  }
+
+  private showNamed(
+    kind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold",
+    text: string,
+    duration: number,
+    spawnAt?: number,
+    exclusive = false,
+  ): void {
     this.namedKind = kind;
     this.bannerText = text;
     this.namedUntil = this.time + duration;
     this.namedSpawned = spawnAt == null;
     this.namedSpawnAt = spawnAt ?? this.time;
+    if (exclusive) this.exclusiveUntil = Math.max(this.exclusiveUntil, this.namedUntil);
   }
 
   private currentBanner(): string | null {
+    const exclusiveNamed =
+      this.namedKind === "scene" ||
+      this.namedKind === "gold" ||
+      this.namedKind === "goldEnd" ||
+      this.namedKind === "hold";
+    if (exclusiveNamed && this.time < this.namedUntil && this.bannerText) return this.bannerText;
     if (this.warningLane) return this.warningLane === "left" ? "躲开左道！" : "躲开右道！";
     if (this.rushActive) return "左道来袭！";
     if (this.namedKind && this.time < this.namedUntil && this.bannerText) return this.bannerText;
@@ -523,15 +634,8 @@ export class Game {
         this.nextAlleyI += 1;
         this.nextAlleyAt = alleyTime(this.nextAlleyI, this.runSeed);
       }
-      if (this.namedKind !== "gold" && this.namedKind !== "scene") {
-        this.namedKind = null;
-        this.bannerText = null;
-      } else if (this.time >= this.namedUntil) {
-        if (this.namedKind !== "gold") {
-          this.namedKind = null;
-          this.bannerText = null;
-        }
-      }
+      this.namedKind = null;
+      this.bannerText = null;
     }
     if (this.namedKind === "pincer" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
       this.spawnPincerPack();
@@ -541,14 +645,41 @@ export class Game {
       this.spawnAlleyPack();
       this.namedSpawned = true;
     }
+    if (this.namedKind === "hold" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+      this.namedSpawned = true;
+    }
     if (this.namedKind || this.warningLane || this.rushActive || this.time < this.quietUntil) return;
+    if (this.time < this.exclusiveUntil || this.time < this.goldSafeUntil) return;
     if (this.time >= this.nextPincerAt && this.squad.count > 0) {
       this.showNamed("pincer", "左右夹击！", PINCER_TELEGRAPH + PINCER_BANNER, this.time + PINCER_TELEGRAPH);
       return;
     }
-    if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene === "night") {
-      this.showNamed("alley", "巷口来袭！", ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
+    if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene !== "day") {
+      this.alleyFacing = alleySide(this.nextAlleyI, this.runSeed);
+      this.showNamed("alley", alleyBannerText(this.alleyFacing), ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
     }
+  }
+
+  private updateHold(): void {
+    if (this.holdStarted) {
+      if (this.time >= this.holdUntil) {
+        this.holdStarted = false;
+        if (Math.abs(this.squad.x) > HOLD_MID && this.squad.count > 0) {
+          this.squad.lose(HOLD_DAMAGE);
+          this.shake = 0.32;
+          this.audio.play("red");
+        }
+      }
+      return;
+    }
+    if (this.scene === "day" || this.time < this.nextHoldAt || this.squad.count <= 0) return;
+    if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") return;
+    if (this.time < this.goldSafeUntil) return;
+    this.scene = "fork";
+    this.holdStarted = true;
+    this.holdUntil = this.time + HOLD_TELEGRAPH + HOLD_DURATION;
+    this.showNamed("hold", "守住中道！", HOLD_TELEGRAPH + HOLD_DURATION, this.time + HOLD_TELEGRAPH, true);
+    this.pushEventsPast(this.holdUntil + 1.4);
   }
 
   private spawnPincerPack(): void {
@@ -564,19 +695,21 @@ export class Game {
 
   private spawnAlleyPack(): void {
     const types: EnemyId[] = this.time >= 100 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
+    const side = this.alleyFacing;
     for (let i = 0; i < types.length; i++) {
+      let fromLeft = side === "left" || (side === "both" && i % 2 === 0);
+      if (side === "right") fromLeft = false;
+      const x = fromLeft ? -ALLEY_SIDE_X - i * 0.15 : ALLEY_SIDE_X + i * 0.15;
       this.spawnEnemy(types[i], "mid", {
         z: ALLEY_SPAWN_Z - i * 1.4,
-        x: (i - 1) * 0.45,
-        driftX: this.squad.x,
+        x,
+        driftX: fromLeft ? LANE_X * 0.15 : -LANE_X * 0.15,
       });
     }
   }
 
   private updateAlleyDrift(): void {
-    for (const e of this.enemies.pool.active) {
-      if (e.driftX != null) e.driftX = this.squad.x;
-    }
+    // 巷口体从路边插向路心，不再每帧追小队，贴边无法躲开
   }
 
   private spawnPropsDue(): void {
@@ -621,8 +754,13 @@ export class Game {
       }
       return;
     }
-    if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil) {
-      this.warningLane = laneOfX(this.squad.x);
+    if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
+      const lane = laneOfX(this.squad.x);
+      if (lane === "right" && this.time < this.goldSafeUntil) {
+        this.nextWarningAt = this.goldSafeUntil + 0.35;
+        return;
+      }
+      this.warningLane = lane;
       this.warningImpactAt = this.time + WARNING_TELEGRAPH;
     }
   }
@@ -672,7 +810,7 @@ export class Game {
       }
       return;
     }
-    if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil) {
+    if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
       // 避开即将打出的红预警，两种提示不要叠在一起
       if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
         this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
@@ -691,6 +829,7 @@ export class Game {
       return;
     }
     if (ev.kind === "gate" && ev.gate) {
+      const ev2 = softenGate(ev, this.time, this.squad.count, this.squad.peak);
       const tKey = Math.round(ev.time * 100);
       let pairKey = this.pendingPairs.get(tKey) ?? 0;
       const sameTimeOther = TIMELINE.some(
@@ -703,11 +842,11 @@ export class Game {
         }
       }
       this.gates.spawn({
-        kind: ev.gate,
-        lane: ev.lane,
-        value: ev.value,
-        weapon: ev.weapon,
-        label: ev.label || "",
+        kind: ev2.gate!,
+        lane: ev2.lane,
+        value: ev2.value,
+        weapon: ev2.weapon,
+        label: ev2.label || "",
         pairKey,
       });
     }
@@ -834,7 +973,7 @@ export class Game {
 
   private onPropOpened(p: WorldProp): void {
     if (p.kind === "cage") {
-      this.squad.add(CAGE_REWARD);
+      this.squad.add(cageRewardAt(this.time, this.squad.peak));
       this.particles.puff(p.x, 0.6, p.z, "#E8D48A");
       this.audio.play("gate");
       this.props.pool.release(p);
@@ -981,11 +1120,25 @@ export class Game {
       }
       const hit = titleHit(x, y);
       if (hit === "start") this.beginRun();
-      else if (hit === "legal") this.state = "legal";
+      else if (hit === "legal") {
+        this.legalPage = "summary";
+        this.legalScroll = 0;
+        this.state = "legal";
+      }
       return;
     }
     if (this.state === "legal") {
-      if (legalHit(x, y)) this.state = "title";
+      const hit = legalHit(x, y, this.legalPage);
+      if (hit === "back") {
+        if (this.legalPage === "summary") this.state = "title";
+        else {
+          this.legalPage = "summary";
+          this.legalScroll = 0;
+        }
+      } else if (hit === "privacy" || hit === "age") {
+        this.legalPage = hit;
+        this.legalScroll = 0;
+      }
       return;
     }
     if (this.state === "win" || this.state === "fail") {
@@ -1004,7 +1157,7 @@ export class Game {
     const sh = this.shake > 0 ? (Math.random() * 2 - 1) * 10 * this.shake : 0;
     const sv = this.shake > 0 ? (Math.random() * 2 - 1) * 8 * this.shake : 0;
 
-    drawWorld(ctx, camX, this.animTime, sh, sv, this.scene);
+    drawWorld(ctx, camX, this.animTime, sh, sv, this.scene, this.namedKind === "hold" || (this.holdStarted && this.time < this.holdUntil));
 
     type DrawItem = { z: number; draw: () => void };
     const items: DrawItem[] = [];
@@ -1029,7 +1182,16 @@ export class Game {
     } else if (this.namedKind === "alley" && this.state === "playing") {
       items.push({
         z: 28,
-        draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "alley"),
+        draw: () => {
+          const side = this.alleyFacing;
+          if (side === "left" || side === "both") drawLaneWarning(ctx, "left", camX, this.namedSpawnAt - this.time, "alley");
+          if (side === "right" || side === "both") drawLaneWarning(ctx, "right", camX, this.namedSpawnAt - this.time, "alley");
+        },
+      });
+    } else if (this.namedKind === "hold" && this.state === "playing") {
+      items.push({
+        z: 26,
+        draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "hold"),
       });
     }
     for (const g of this.gates.pool.active) {
@@ -1076,7 +1238,7 @@ export class Game {
     } else if (this.state === "title") {
       drawTitle(ctx, this.best, this.audio.muted);
     } else if (this.state === "legal") {
-      drawLegal(ctx);
+      drawLegal(ctx, this.legalPage, this.legalScroll);
     } else {
       drawResult(ctx, this.kills, this.time, this.squad.peak, this.best);
     }

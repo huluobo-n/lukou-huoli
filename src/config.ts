@@ -178,33 +178,47 @@ export function rushPack(t: number): EnemyId[] {
   return ["walker", "walker", "sprinter"];
 }
 
-/** 满编溢出时，除射速加成外再给短护盾 */
-export const OVERFLOW_SHIELD_DURATION = 3.5;
+/** 满编溢出时，除射速加成外再给护盾；时长需盖住一次切道 */
+export const OVERFLOW_SHIELD_DURATION = 5.5;
 export const SHIELD_DAMAGE_MUL = 0.5;
-export const SHIELD_GATE_DURATION = 4;
-export const CAP_EXPIRE_SHIELD = 2.5;
+export const SHIELD_GATE_DURATION = 6;
+export const CAP_EXPIRE_SHIELD = 5;
+export const NIGHT_SHIELD_DURATION = 6;
+export const NIGHT_WEAPON_MIN = 6;
 
-/** 约 60 秒切换夜路口场景 */
+/** 约 60 秒切换夜路口场景（道路与建筑结构一并更换） */
 export const SCENE_SHIFT_AT = 60;
+export const SCENE_BANNER = 2.8;
 
 /** 金色增幅门不再永久停住：第一次持续一段时间后消失，之后短暂重开 */
 export const GOLD_GATE_LIFE = 16;
 export const GOLD_WINDOW_LIFE = 10;
-export const GOLD_WINDOW_LULL = 2.4;
+export const GOLD_WINDOW_LULL = 4.8;
+export const GOLD_WINDOW_SAFE = 6.5;
 export const GOLD_WINDOW_Z = 32;
-export const GOLD_WINDOW_BASE = [56, 84, 114];
+export const GOLD_WINDOW_BASE = [58, 94, 132];
+export const GOLD_CLOSE_BANNER = 1.6;
 
 /** 第一次左道来袭后的安静重整，再进入具名事件 */
 export const RUSH_QUIET = 5.2;
 export const PINCER_FIRST = 52;
 export const PINCER_TELEGRAPH = 1.25;
 export const PINCER_BANNER = 2.6;
-export const PINCER_PERIOD = 22;
-export const ALLEY_FIRST = 68;
+export const PINCER_PERIOD = 28;
+export const ALLEY_FIRST = 78;
 export const ALLEY_TELEGRAPH = 1.3;
 export const ALLEY_BANNER = 2.6;
-export const ALLEY_PERIOD = 24;
+export const ALLEY_PERIOD = 30;
 export const ALLEY_SPAWN_Z = 40;
+export const ALLEY_SIDE_X = 8.0;
+
+/** 约 2:30 进入岔路口，并短暂要求守住中道 */
+export const HOLD_FIRST = 150;
+export const HOLD_TELEGRAPH = 1.6;
+export const HOLD_DURATION = 5.2;
+export const HOLD_DAMAGE = 8;
+export const HOLD_MID = 1.15;
+export const ENDLESS_GATE_PERIOD_LATE = 14;
 
 /** 错过第一扇加人门时，右道补一扇小 +2，不改开局 10 秒压力 */
 export const MERCY_AT = 10.2;
@@ -217,16 +231,58 @@ export function seedOffset(seed: number, key: number, span: number): number {
 }
 
 export function goldWindowTime(index: number, seed: number): number {
-  const base = GOLD_WINDOW_BASE[index] ?? (GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 30);
-  return base + seedOffset(seed, 17 + index, 2.2);
+  const base = GOLD_WINDOW_BASE[index] ?? (GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 34);
+  const span = index === 0 ? 2.0 : 4.0;
+  return base + seedOffset(seed, 17 + index, span);
 }
 
 export function pincerTime(index: number, seed: number): number {
-  return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, 2.0);
+  const span = index === 0 ? 2.0 : 4.5;
+  return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, span);
 }
 
 export function alleyTime(index: number, seed: number): number {
-  return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 2.4);
+  return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 5.5);
+}
+
+export function holdTime(seed: number): number {
+  return HOLD_FIRST + seedOffset(seed, 71, 8);
+}
+
+export type AlleySide = "both" | "left" | "right";
+export type SceneId = "day" | "night" | "fork";
+
+export function alleySide(index: number, seed: number): AlleySide {
+  const x = Math.imul(seed ^ ((91 + index) * 0x9e3779b9), 0x85ebca6b) >>> 0;
+  const r = x % 3;
+  return r === 0 ? "left" : r === 1 ? "right" : "both";
+}
+
+export function alleyBannerText(side: AlleySide): string {
+  if (side === "left") return "巷口来袭！左侧插进！";
+  if (side === "right") return "巷口来袭！右侧插进！";
+  return "巷口来袭！左右插进！";
+}
+
+/** 入夜或满编后，减弱补人并把不再加人的门改成护盾，避免仍显示 +N */
+export function softenGate(ev: TimelineEvent, time: number, count: number, peak: number): TimelineEvent {
+  if (time < SCENE_SHIFT_AT) return ev;
+  if (ev.kind !== "gate") return ev;
+  if (ev.gate !== "add" && ev.gate !== "mul") return ev;
+  if (peak >= MAX_SQUAD && count >= MAX_SQUAD) {
+    return { ...ev, gate: "shield", value: undefined, weapon: undefined, label: "护盾" };
+  }
+  if (peak >= MAX_SQUAD) {
+    return { ...ev, gate: "add", value: 1, weapon: undefined, label: "+1" };
+  }
+  if (ev.gate === "mul") return { ...ev, gate: "add", value: 2, weapon: undefined, label: "+2" };
+  const v = Math.max(1, Math.floor((ev.value ?? 3) / 2));
+  return { ...ev, value: v, label: "+" + v };
+}
+
+export function cageRewardAt(time: number, peak: number): number {
+  if (time >= SCENE_SHIFT_AT && peak >= MAX_SQUAD) return 1;
+  return CAGE_REWARD;
 }
 
 export const CAGE_HP = 8;

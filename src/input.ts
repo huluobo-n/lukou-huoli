@@ -1,4 +1,4 @@
-import { CANVAS_W, LANE_X } from "./config";
+import { CANVAS_H, CANVAS_W, LANE_X } from "./config";
 import type { Platform, PointerSample } from "./platform";
 
 export class Input {
@@ -7,6 +7,8 @@ export class Input {
   swiped = false;
   private pointerId: number | null = null;
   private lastX = 0;
+  private lastY = 0;
+  private scrollAcc = 0;
   private keys = new Set<string>();
   readonly clicks: { x: number; y: number }[] = [];
 
@@ -23,6 +25,8 @@ export class Input {
     this.dragging = false;
     this.swiped = false;
     this.pointerId = null;
+    this.lastY = 0;
+    this.scrollAcc = 0;
     this.keys.clear();
     this.clicks.length = 0;
   }
@@ -31,6 +35,16 @@ export class Input {
     const list = this.clicks.slice();
     this.clicks.length = 0;
     return list;
+  }
+
+  consumeScroll(dt = 0): number {
+    let d = this.scrollAcc;
+    this.scrollAcc = 0;
+    if (this.keys.has("ArrowUp")) d += 420 * dt;
+    if (this.keys.has("ArrowDown")) d -= 420 * dt;
+    if (this.keys.has("PageUp")) d += 720 * dt;
+    if (this.keys.has("PageDown")) d -= 720 * dt;
+    return d;
   }
 
   update(dt: number, currentX: number): number {
@@ -49,6 +63,7 @@ export class Input {
     this.pointerId = p.id;
     this.dragging = true;
     this.lastX = p.x;
+    this.lastY = p.y;
     const logic = this.platform.toLogic(p.x, p.y);
     this.clicks.push(logic);
   }
@@ -56,9 +71,13 @@ export class Input {
   private move(p: PointerSample): void {
     if (!this.dragging || (this.pointerId !== null && p.id !== this.pointerId)) return;
     const dx = p.x - this.lastX;
+    const dy = p.y - this.lastY;
     this.lastX = p.x;
-    if (Math.abs(dx) > 0.4) this.swiped = true;
+    this.lastY = p.y;
+    if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4) this.swiped = true;
     const logicDx = (dx / this.platform.cssWidth) * CANVAS_W;
+    const logicDy = this.platform.cssHeight > 0 ? (dy / this.platform.cssHeight) * CANVAS_H : dy;
+    this.scrollAcc += logicDy;
     // 拖过大半屏约等于换到对面车道
     this.targetX += (logicDx / (CANVAS_W * 0.42)) * (LANE_X * 2);
     if (this.targetX > LANE_X) this.targetX = LANE_X;

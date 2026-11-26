@@ -6,6 +6,7 @@ import {
   ENEMY,
   SCRIPT_ENEMY_END,
   LANE_X,
+  CANVAS_W,
   GOLD_AMP_MUL,
   GOLD_NEAR_MUL,
   GOLD_GATE_Z,
@@ -25,10 +26,19 @@ import {
   MERCY_AT,
   SHIELD_GATE_DURATION,
   OVERFLOW_SHIELD_DURATION,
+  NIGHT_SHIELD_DURATION,
+  GOLD_WINDOW_SAFE,
+  GOLD_WINDOW_LULL,
+  GOLD_WINDOW_LIFE,
+  HOLD_FIRST,
+  alleyBannerText,
+  alleySide,
   alleyTime,
   endlessGateFor,
   goldWindowTime,
+  holdTime,
   pincerTime,
+  softenGate,
   BARREL_CONTACT_LOSS,
   BARREL_AOE_DAMAGE,
   enemyHpMul,
@@ -37,6 +47,8 @@ import {
   warningPeriod,
 } from "../src/config";
 import { Game } from "../src/game";
+import { LEGAL_AGE, LEGAL_PRIVACY, LEGAL_SUMMARY } from "../src/legal";
+import { legalHit, legalMaxScroll, titleHit } from "../src/render";
 import { Squad } from "../src/squad";
 import { chargeGate, gateSignedValue } from "../src/gates";
 import type { Platform, PointerSample } from "../src/platform";
@@ -546,6 +558,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   stay.props.clear();
   stay.gates.clear();
   stay.squad.setCount(20);
+  stay.squad.shieldTime = 0;
   stay.squad.x = -LANE_X;
   stay.input.targetX = -LANE_X;
   stay.step(0.2);
@@ -557,6 +570,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   stay.props.clear();
   stay.gates.clear();
   stay.squad.setCount(20);
+  stay.squad.shieldTime = 0;
   stay.squad.iframes = 0;
   const before = stay.squad.count;
   const staySlices = Math.ceil((WARNING_TELEGRAPH + 0.08) / (1 / 60));
@@ -580,6 +594,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   dodge.props.clear();
   dodge.gates.clear();
   dodge.squad.setCount(20);
+  dodge.squad.shieldTime = 0;
   dodge.squad.x = -LANE_X;
   dodge.input.targetX = -LANE_X;
   dodge.step(0.2);
@@ -891,19 +906,21 @@ console.log("18. 夜路口场景、安静重整与具名事件；横幅写明左
     g.squad.setCount(20);
     g.step(0.1);
     const b = g.getState().banner;
-    if (b && b.text === "巷口来袭！") {
+    if (b && b.text.includes("巷口来袭") && (b.text.includes("插进") || b.text.includes("左侧") || b.text.includes("右侧") || b.text.includes("左右"))) {
       sawAlley = true;
       break;
     }
   }
-  assert(sawAlley, "夜路口后应出现具名事件「巷口来袭！」，当前 " + ((g.getState().banner && g.getState().banner!.text) || "无") + " t=" + g.time.toFixed(2));
+  assert(sawAlley, "夜路口后应出现写明方位的「巷口来袭」，当前 " + ((g.getState().banner && g.getState().banner!.text) || "无") + " t=" + g.time.toFixed(2));
+  const alleyText = (g.getState().banner && g.getState().banner!.text) || "";
+  assert(alleyText.includes("左侧") || alleyText.includes("右侧") || alleyText.includes("左右"), "巷口横幅应写清方位，得到 " + alleyText);
   const alleySlices = Math.ceil((1.3 + 0.12) / (1 / 60));
   for (let i = 0; i < alleySlices; i++) {
     g.bullets.clear();
     g.step(1 / 60);
   }
-  const mid = g.enemies.pool.active.filter((e) => Math.abs(e.x) < 1.6 || e.driftX != null);
-  assert(mid.length >= 1, "巷口来袭应从中间巷放出感染体，得到 " + mid.length);
+  const cutters = g.enemies.pool.active.filter((e) => e.driftX != null && Math.abs(e.x) > 4);
+  assert(cutters.length >= 1, "巷口来袭应从路边插进，不能只走中线，得到靠边 " + cutters.length + " / 全场 " + g.enemies.pool.active.length);
 }
 
 console.log("19. 中后期时间轴随对局种子变化");
@@ -933,6 +950,198 @@ console.log("19. 中后期时间轴随对局种子变化");
   const t1 = pincerTime(0, 1);
   const t2 = pincerTime(0, 99);
   assert(t1 !== t2 || kinds1 !== kinds2 || labels1.join() !== labels2.join(), "两局中后期不应是同一条钟点表");
+  assert(holdTime(1) !== holdTime(99), "不同种子的守住中道时间应不同");
+  assert(alleySide(0, 1) !== alleySide(0, 3) || alleySide(1, 1) !== alleySide(1, 99), "不同种子的巷口方位应能变化");
+  assert(alleyBannerText("left").includes("左侧") && alleyBannerText("both").includes("左右"), "巷口文案应按方位区分");
+}
+
+
+console.log("20. 金门窗口会清空右列并避免立刻躲开右道，关闭时有提示");
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  const due = goldWindowTime(0, 1);
+  while (g.time < due - 0.4 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+  }
+  g.enemies.clear();
+  g.props.clear();
+  g.squad.setCount(20);
+  for (let i = 0; i < 5; i++) {
+    g.enemies.spawn("walker", "right", { z: 24 + i * 3, x: LANE_X });
+  }
+  const before = g.enemies.pool.active.filter((e) => e.x > 0 && e.z >= 18 && e.z <= 52).length;
+  assert(before >= 4, "窗口前右列应有测试用感染体");
+  const deadline = due + 6;
+  let sawGold = false;
+  let sawClose = false;
+  let rightWarnDuringSafe = false;
+  let thinned = false;
+  let paused = false;
+  while (g.time < deadline && g.state === "playing") {
+    const zBefore = g.enemies.pool.active.filter((e) => e.x > 0).map((e) => e.z);
+    g.bullets.clear();
+    g.squad.setCount(20);
+    g.step(0.1);
+    const st = g.getState();
+    if (st.banner && st.banner.text.includes("右道") && st.banner.text.includes("×2")) sawGold = true;
+    if (st.banner && st.banner.text.includes("金门关闭")) sawClose = true;
+    if (st.goldSafe && st.warning && st.warning.lane === "right") rightWarnDuringSafe = true;
+    const right = g.enemies.pool.active.filter((e) => e.x > 0 && e.z >= 18 && e.z <= 52);
+    if (sawGold && right.length <= 2) thinned = true;
+    if (st.goldSafe && zBefore.length) {
+      const still = g.enemies.pool.active.filter((e) => e.x > 0);
+      if (still.length && Math.abs((still[0].z) - (zBefore[0] || still[0].z)) < 0.08) paused = true;
+    }
+  }
+  assert(sawGold, "应打出「右道×2！快切」");
+  assert(thinned, "亮起时应先抽稀右列");
+  assert(!rightWarnDuringSafe, "空档保护期内不应立刻打出躲开右道");
+  // 再推过窗口寿命，应看到关闭提示
+  const closeDeadline = due + GOLD_WINDOW_LIFE + 2.2;
+  while (g.time < closeDeadline && g.state === "playing") {
+    g.enemies.clear();
+    g.squad.setCount(20);
+    g.step(0.15);
+    const b = g.getState().banner;
+    if (b && b.text.includes("金门关闭")) sawClose = true;
+  }
+  assert(sawClose, "金门到期应提示「金门关闭！」");
+  assert(GOLD_WINDOW_LULL >= 4 && GOLD_WINDOW_SAFE >= 6, "空档暂停与保护时长应盖住一次切道选择");
+}
+
+console.log("21. 入夜横幅独占、补重击或护盾，并切换道路结构");
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.squad.equip("pistol");
+  while (g.time < SCENE_SHIFT_AT - 0.05 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+    g.squad.weapon = "pistol";
+    g.squad.weaponTime = 0;
+  }
+  g.squad.setCount(20);
+  g.squad.weapon = "pistol";
+  g.squad.weaponTime = 0;
+  g.step(0.2);
+  assertEq(g.getState().scene, "night", "约 60 秒应进入夜路口");
+  const nightBanner = g.getState().banner && g.getState().banner!.text;
+  assert(nightBanner === "进入夜路口！", "入夜横幅应单独亮起，得到 " + (nightBanner || "无"));
+  assert(g.getState().weapon === "heavy", "入夜时应补上重击，避免只剩手枪，当前 " + g.getState().weapon);
+  assert(g.getState().shieldTime >= NIGHT_SHIELD_DURATION - 0.25, "入夜时应补充护盾，护盾 " + g.getState().shieldTime);
+  g.drawFrame();
+}
+
+console.log("22. 约 2:30 出现守住中道的新阶段");
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  const due = holdTime(1);
+  assert(due > 140 && due < 165, "守住中道应约在 2:30 附近，得到 " + due.toFixed(2));
+  while (g.time < due - 0.2 && g.state === "playing") {
+    g.step(0.35);
+    g.squad.setCount(20);
+    g.enemies.clear();
+    g.props.clear();
+  }
+  let sawHold = false;
+  const deadline = due + 8;
+  while (g.time < deadline && g.state === "playing") {
+    g.enemies.clear();
+    g.squad.setCount(20);
+    g.step(0.1);
+    const st = g.getState();
+    if (st.banner && st.banner.text.includes("守住中道")) sawHold = true;
+    if (st.scene === "fork" && sawHold) break;
+  }
+  assert(sawHold, "中后段应出现「守住中道！」");
+  assertEq(g.getState().scene, "fork", "守住中道时应切到岔路口结构，当前 " + g.getState().scene);
+  // 一直蹲左应在结算时掉人
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  const before = 20;
+  g.squad.setCount(before);
+  g.squad.iframes = 0;
+  while (g.getState().hold && g.state === "playing") {
+    g.enemies.clear();
+    g.bullets.clear();
+    g.step(0.1);
+  }
+  assert(g.squad.count < before, "未守中道应掉人，人数 " + g.squad.count);
+}
+
+console.log("23. 入夜且满编后补人门减弱，不再显示假 +N");
+{
+  const rawAdd = { time: 80, kind: "gate" as const, lane: "left" as const, gate: "add" as const, value: 5, label: "+5" };
+  const cap = softenGate(rawAdd, 80, 20, 20);
+  assert(cap.gate === "shield" && cap.label === "护盾", "满编后 +5 应改成护盾，得到 " + cap.gate + "/" + cap.label);
+  const low = softenGate(rawAdd, 80, 8, 20);
+  assert(low.gate === "add" && low.value === 1 && low.label === "+1", "满编后掉人只应小补，得到 " + low.label);
+  const early = softenGate(rawAdd, 20, 20, 20);
+  assert(early.gate === "add" && early.value === 5, "入夜前不应改开局补人门");
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  while (g.time < 76 && g.state === "playing") {
+    g.step(0.4);
+    g.squad.setCount(20);
+  }
+  // 推过第一扇无尽门
+  while (g.time < 86 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+  }
+  const plus = g.gates.pool.active.filter((x) => x.kind === "add" || x.kind === "mul");
+  const fake = plus.filter((x) => (x.label || "").includes("3") || (x.label || "").includes("5") || x.label === "×2" || (x.value != null && x.value >= 3 && x.kind === "add"));
+  assert(fake.length === 0, "入夜满编后场上不应再有大号 +N / ×2 补人门，得到 " + plus.map((x) => x.label).join(","));
+}
+
+console.log("24. 护盾时长盖住一次切道；正式隐私与适龄页替换占位");
+{
+  assert(OVERFLOW_SHIELD_DURATION >= 5 && SHIELD_GATE_DURATION >= 5.5 && NIGHT_SHIELD_DURATION >= 5, "溢出/拾取/入夜护盾都应长于一次切道");
+  const s = new Squad();
+  s.reset();
+  s.setCount(20);
+  s.add(1);
+  assert(s.shieldTime >= 5, "满编溢出护盾应至少约 5 秒，得到 " + s.shieldTime);
+
+  const allLegal = LEGAL_SUMMARY.join("") + LEGAL_PRIVACY.join("") + LEGAL_AGE.join("");
+  assert(!allLegal.includes("占位"), "正式文案不应再含占位说明");
+  assert(LEGAL_SUMMARY.some((x) => x.includes("12 周岁") && x.includes("卡通风格")), "精简版应含已过审的适龄与类型说明");
+  assert(LEGAL_PRIVACY.some((x) => x.includes("生效日期：2026 年 11 月 26 日")), "隐私政策应含生效日期");
+  assert(LEGAL_AGE.some((x) => x.includes("适龄范围：12 周岁及以上")), "适龄提示应含适龄范围");
+  assert(allLegal.includes("pengnanhu81@gmail.com"), "联系邮箱应与过审稿一致");
+
+  const g = new Game(mockPlatform());
+  assert(titleHit(CANVAS_W / 2, 1280 - 80) === "legal", "开屏底部仍可进入说明");
+  g.input.clicks.push({ x: CANVAS_W / 2, y: 1280 - 80 });
+  g.step(0.05);
+  assertEq(g.state, "legal", "点击底部应进入精简说明");
+  assertEq(g.getState().legalPage, "summary", "默认先显示精简版");
+  g.drawFrame();
+  const priv = legalHit(80 + 10, 1280 - 214 + 10, "summary");
+  assert(priv === "privacy", "精简版可进入完整隐私政策");
+  g.input.clicks.push({ x: 90, y: 1280 - 214 + 10 });
+  g.step(0.05);
+  assertEq(g.getState().legalPage, "privacy", "应进入隐私政策完整页");
+  assert(legalMaxScroll("privacy") > legalMaxScroll("summary"), "完整隐私政策应可滚动");
+  g.legalScroll = -40;
+  g.drawFrame();
+  g.input.clicks.push({ x: CANVAS_W / 2, y: 1280 - 132 + 10 });
+  g.step(0.05);
+  assertEq(g.getState().legalPage, "summary", "完整页返回应回到精简版");
+  g.input.clicks.push({ x: CANVAS_W - 90, y: 1280 - 214 + 10 });
+  g.step(0.05);
+  assertEq(g.getState().legalPage, "age", "精简版可进入完整适龄提示");
+  g.drawFrame();
 }
 
 console.log("");

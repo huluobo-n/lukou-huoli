@@ -152,26 +152,38 @@
     if (t >= 60) return ["jumper", "walker", "sprinter"];
     return ["walker", "walker", "sprinter"];
   }
-  var OVERFLOW_SHIELD_DURATION = 3.5;
+  var OVERFLOW_SHIELD_DURATION = 5.5;
   var SHIELD_DAMAGE_MUL = 0.5;
-  var SHIELD_GATE_DURATION = 4;
-  var CAP_EXPIRE_SHIELD = 2.5;
+  var SHIELD_GATE_DURATION = 6;
+  var CAP_EXPIRE_SHIELD = 5;
+  var NIGHT_SHIELD_DURATION = 6;
+  var NIGHT_WEAPON_MIN = 6;
   var SCENE_SHIFT_AT = 60;
+  var SCENE_BANNER = 2.8;
   var GOLD_GATE_LIFE = 16;
   var GOLD_WINDOW_LIFE = 10;
-  var GOLD_WINDOW_LULL = 2.4;
+  var GOLD_WINDOW_LULL = 4.8;
+  var GOLD_WINDOW_SAFE = 6.5;
   var GOLD_WINDOW_Z = 32;
-  var GOLD_WINDOW_BASE = [56, 84, 114];
+  var GOLD_WINDOW_BASE = [58, 94, 132];
+  var GOLD_CLOSE_BANNER = 1.6;
   var RUSH_QUIET = 5.2;
   var PINCER_FIRST = 52;
   var PINCER_TELEGRAPH = 1.25;
   var PINCER_BANNER = 2.6;
-  var PINCER_PERIOD = 22;
-  var ALLEY_FIRST = 68;
+  var PINCER_PERIOD = 28;
+  var ALLEY_FIRST = 78;
   var ALLEY_TELEGRAPH = 1.3;
   var ALLEY_BANNER = 2.6;
-  var ALLEY_PERIOD = 24;
+  var ALLEY_PERIOD = 30;
   var ALLEY_SPAWN_Z = 40;
+  var ALLEY_SIDE_X = 8;
+  var HOLD_FIRST = 150;
+  var HOLD_TELEGRAPH = 1.6;
+  var HOLD_DURATION = 5.2;
+  var HOLD_DAMAGE = 8;
+  var HOLD_MID = 1.15;
+  var ENDLESS_GATE_PERIOD_LATE = 14;
   var MERCY_AT = 10.2;
   var MERCY_MAX_COUNT = 2;
   var MERCY_Z = 22;
@@ -181,14 +193,48 @@
   }
   function goldWindowTime(index, seed) {
     var _a;
-    const base = (_a = GOLD_WINDOW_BASE[index]) != null ? _a : GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 30;
-    return base + seedOffset(seed, 17 + index, 2.2);
+    const base = (_a = GOLD_WINDOW_BASE[index]) != null ? _a : GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 34;
+    const span = index === 0 ? 2 : 4;
+    return base + seedOffset(seed, 17 + index, span);
   }
   function pincerTime(index, seed) {
-    return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, 2);
+    const span = index === 0 ? 2 : 4.5;
+    return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, span);
   }
   function alleyTime(index, seed) {
-    return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 2.4);
+    return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 5.5);
+  }
+  function holdTime(seed) {
+    return HOLD_FIRST + seedOffset(seed, 71, 8);
+  }
+  function alleySide(index, seed) {
+    const x = Math.imul(seed ^ (91 + index) * 2654435769, 2246822507) >>> 0;
+    const r = x % 3;
+    return r === 0 ? "left" : r === 1 ? "right" : "both";
+  }
+  function alleyBannerText(side) {
+    if (side === "left") return "\u5DF7\u53E3\u6765\u88AD\uFF01\u5DE6\u4FA7\u63D2\u8FDB\uFF01";
+    if (side === "right") return "\u5DF7\u53E3\u6765\u88AD\uFF01\u53F3\u4FA7\u63D2\u8FDB\uFF01";
+    return "\u5DF7\u53E3\u6765\u88AD\uFF01\u5DE6\u53F3\u63D2\u8FDB\uFF01";
+  }
+  function softenGate(ev, time, count, peak) {
+    var _a;
+    if (time < SCENE_SHIFT_AT) return ev;
+    if (ev.kind !== "gate") return ev;
+    if (ev.gate !== "add" && ev.gate !== "mul") return ev;
+    if (peak >= MAX_SQUAD && count >= MAX_SQUAD) {
+      return { ...ev, gate: "shield", value: void 0, weapon: void 0, label: "\u62A4\u76FE" };
+    }
+    if (peak >= MAX_SQUAD) {
+      return { ...ev, gate: "add", value: 1, weapon: void 0, label: "+1" };
+    }
+    if (ev.gate === "mul") return { ...ev, gate: "add", value: 2, weapon: void 0, label: "+2" };
+    const v = Math.max(1, Math.floor(((_a = ev.value) != null ? _a : 3) / 2));
+    return { ...ev, value: v, label: "+" + v };
+  }
+  function cageRewardAt(time, peak) {
+    if (time >= SCENE_SHIFT_AT && peak >= MAX_SQUAD) return 1;
+    return CAGE_REWARD;
   }
   var CAGE_HP = 8;
   var CAGE_REWARD = 3;
@@ -915,7 +961,7 @@
       e.driftX = (_d = opts == null ? void 0 : opts.driftX) != null ? _d : null;
       return e;
     }
-    update(dt) {
+    update(dt, rightMul = 1) {
       const list = this.pool.active;
       for (let i = list.length - 1; i >= 0; i--) {
         const e = list[i];
@@ -943,7 +989,8 @@
         if (e.type === "jumper") {
           this.updateJumper(e, dt);
         }
-        e.z -= BASE_SPEED * def.speed * mul * dt;
+        const laneMul = e.x > 0.15 ? rightMul : 1;
+        e.z -= BASE_SPEED * def.speed * mul * laneMul * dt;
         if (e.z < DESPAWN_Z || !e.alive) this.pool.releaseAt(i);
       }
     }
@@ -1083,6 +1130,8 @@
       this.swiped = false;
       this.pointerId = null;
       this.lastX = 0;
+      this.lastY = 0;
+      this.scrollAcc = 0;
       this.keys = /* @__PURE__ */ new Set();
       this.clicks = [];
       platform.onPointerDown((p) => this.down(p));
@@ -1096,6 +1145,8 @@
       this.dragging = false;
       this.swiped = false;
       this.pointerId = null;
+      this.lastY = 0;
+      this.scrollAcc = 0;
       this.keys.clear();
       this.clicks.length = 0;
     }
@@ -1103,6 +1154,15 @@
       const list = this.clicks.slice();
       this.clicks.length = 0;
       return list;
+    }
+    consumeScroll(dt = 0) {
+      let d = this.scrollAcc;
+      this.scrollAcc = 0;
+      if (this.keys.has("ArrowUp")) d += 420 * dt;
+      if (this.keys.has("ArrowDown")) d -= 420 * dt;
+      if (this.keys.has("PageUp")) d += 720 * dt;
+      if (this.keys.has("PageDown")) d -= 720 * dt;
+      return d;
     }
     update(dt, currentX) {
       const left = this.keys.has("ArrowLeft") || this.keys.has("a") || this.keys.has("A");
@@ -1118,15 +1178,20 @@
       this.pointerId = p.id;
       this.dragging = true;
       this.lastX = p.x;
+      this.lastY = p.y;
       const logic = this.platform.toLogic(p.x, p.y);
       this.clicks.push(logic);
     }
     move(p) {
       if (!this.dragging || this.pointerId !== null && p.id !== this.pointerId) return;
       const dx = p.x - this.lastX;
+      const dy = p.y - this.lastY;
       this.lastX = p.x;
-      if (Math.abs(dx) > 0.4) this.swiped = true;
+      this.lastY = p.y;
+      if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4) this.swiped = true;
       const logicDx = dx / this.platform.cssWidth * CANVAS_W;
+      const logicDy = this.platform.cssHeight > 0 ? dy / this.platform.cssHeight * CANVAS_H : dy;
+      this.scrollAcc += logicDy;
       this.targetX += logicDx / (CANVAS_W * 0.42) * (LANE_X * 2);
       if (this.targetX > LANE_X) this.targetX = LANE_X;
       if (this.targetX < -LANE_X) this.targetX = -LANE_X;
@@ -1287,6 +1352,60 @@
     }
   };
 
+  // src/legal.ts
+  var LEGAL_SUMMARY_TITLE = "\u9690\u79C1\u4E0E\u9002\u9F84";
+  var LEGAL_SUMMARY = [
+    "\u300A\u8DEF\u53E3\u706B\u529B\u300B\u662F\u4E00\u6B3E\u5361\u901A\u98CE\u683C\u7684\u4F11\u95F2\u5C04\u51FB\u5C0F\u6E38\u620F\uFF0C\u5EFA\u8BAE 12 \u5468\u5C81\u53CA\u4EE5\u4E0A\u73A9\u5BB6\u4F7F\u7528\u3002\u8BF7\u5408\u7406\u5B89\u6392\u6E38\u620F\u65F6\u95F4\uFF1B\u672A\u6EE1 18 \u5468\u5C81\u7684\u73A9\u5BB6\uFF0C\u5EFA\u8BAE\u5728\u76D1\u62A4\u4EBA\u6307\u5BFC\u4E0B\u4F7F\u7528\u3002",
+    "\u672C\u6E38\u620F\u4E0D\u8981\u6C42\u6CE8\u518C\u6216\u767B\u5F55\uFF0C\u4E5F\u4E0D\u6536\u96C6\u59D3\u540D\u3001\u624B\u673A\u53F7\u3001\u8EAB\u4EFD\u8BC1\u7B49\u4E2A\u4EBA\u8EAB\u4EFD\u4FE1\u606F\u3002\u672C\u5C40\u51FB\u6740\u3001\u575A\u6301\u65F6\u95F4\u548C\u6700\u9AD8\u4EBA\u6570\uFF0C\u4EE5\u53CA\u97F3\u6548\u5F00\u5173\uFF0C\u53EA\u4FDD\u5B58\u5728\u4F60\u6B63\u5728\u4F7F\u7528\u7684\u8FD9\u53F0\u8BBE\u5907\u4E0A\uFF0C\u7528\u4E8E\u663E\u793A\u672C\u5730\u6700\u597D\u6210\u7EE9\uFF0C\u4E0D\u4F1A\u4E0A\u4F20\u5230\u5F00\u53D1\u8005\u7684\u670D\u52A1\u5668\u3002",
+    "\u672C\u7248\u672C\u6CA1\u6709\u5185\u8D2D\uFF0C\u5E7F\u544A\u80FD\u529B\u5DF2\u5173\u95ED\u3002\u82E5\u4EE5\u540E\u5F00\u901A\u5E7F\u544A\u6216\u5176\u4ED6\u670D\u52A1\uFF0C\u4F1A\u5728\u672C\u8BF4\u660E\u4E2D\u66F4\u65B0\u3002",
+    "\u5B8C\u6574\u8BF4\u660E\u8BF7\u89C1\u300A\u9690\u79C1\u653F\u7B56\u300B\u548C\u300A\u9002\u9F84\u63D0\u793A\u300B\u3002\u6709\u95EE\u9898\u53EF\u53D1\u4FE1\u81F3 pengnanhu81@gmail.com\u3002"
+  ];
+  var LEGAL_PRIVACY_TITLE = "\u9690\u79C1\u653F\u7B56";
+  var LEGAL_PRIVACY = [
+    "\u751F\u6548\u65E5\u671F\uFF1A2026 \u5E74 11 \u6708 26 \u65E5",
+    "\u672C\u653F\u7B56\u9002\u7528\u4E8E\u300A\u8DEF\u53E3\u706B\u529B\u300B\u7F51\u9875\u7248\uFF08\u5F53\u524D\u5730\u5740\uFF1Ahttps://huluobo-n.github.io/lukou-huoli/ \uFF09\u3002\u672C\u6E38\u620F\u7531\u4E2A\u4EBA\u5F00\u53D1\u8005\u7EF4\u62A4\u3002\u5982\u4F60\u5BF9\u4E2A\u4EBA\u4FE1\u606F\u5904\u7406\u6709\u7591\u95EE\uFF0C\u53EF\u53D1\u4FE1\u81F3 pengnanhu81@gmail.com\u3002",
+    "1. \u6211\u4EEC\u6536\u96C6\u54EA\u4E9B\u4FE1\u606F",
+    "\u672C\u6E38\u620F\u4E0D\u8981\u6C42\u6CE8\u518C\u6216\u767B\u5F55\uFF0C\u4E0D\u6536\u96C6\u4F60\u7684\u59D3\u540D\u3001\u624B\u673A\u53F7\u3001\u7535\u5B50\u90AE\u7BB1\u3001\u8EAB\u4EFD\u8BC1\u53F7\u6216\u5176\u4ED6\u7528\u4E8E\u8BC6\u522B\u4E2A\u4EBA\u8EAB\u4EFD\u7684\u4FE1\u606F\uFF0C\u4E5F\u4E0D\u7533\u8BF7\u76F8\u673A\u3001\u9EA6\u514B\u98CE\u3001\u901A\u8BAF\u5F55\u6216\u4F4D\u7F6E\u6743\u9650\u3002",
+    "\u4E3A\u4E86\u5728\u540C\u4E00\u53F0\u8BBE\u5907\u4E0A\u8BB0\u4F4F\u6700\u597D\u6210\u7EE9\u548C\u97F3\u6548\u504F\u597D\uFF0C\u672C\u6E38\u620F\u53EA\u4F1A\u5728\u672C\u5730\u4FDD\u5B58\u4EE5\u4E0B\u4FE1\u606F\uFF1A",
+    "\u6700\u957F\u575A\u6301\u65F6\u95F4\u3001\u5386\u53F2\u6700\u9AD8\u51FB\u6740\u3001\u5386\u53F2\u6700\u9AD8\u4EBA\u6570\uFF1B",
+    "\u97F3\u6548\u662F\u5426\u5173\u95ED\u3002",
+    "\u8FD9\u4E9B\u4FE1\u606F\u5B58\u50A8\u5728\u4F60\u6B63\u5728\u4F7F\u7528\u7684\u6D4F\u89C8\u5668\uFF08\u6216\u65E5\u540E\u5982\u5728\u5FAE\u4FE1\u4E2D\u6253\u5F00\u65F6\u7684\u540C\u7C7B\u672C\u5730\u5B58\u50A8\uFF09\u4E2D\uFF0C\u4E0D\u4F1A\u4E0A\u4F20\u5230\u5F00\u53D1\u8005\u7684\u670D\u52A1\u5668\uFF0C\u4E5F\u4E0D\u4F1A\u7528\u4E8E\u7528\u6237\u753B\u50CF\u6216\u5411\u4F60\u53D1\u9001\u8425\u9500\u4FE1\u606F\u3002\u6E05\u9664\u7F51\u7AD9\u6570\u636E\u6216\u5378\u8F7D\u540E\uFF0C\u4E0A\u8FF0\u672C\u5730\u8BB0\u5F55\u53EF\u80FD\u4E00\u5E76\u6D88\u5931\uFF0C\u4E14\u65E0\u6CD5\u6062\u590D\u3002",
+    "2. \u8BBF\u95EE\u7F51\u9875\u65F6\u7684\u901A\u5E38\u60C5\u51B5",
+    "\u6253\u5F00\u672C\u6E38\u620F\u9875\u9762\u65F6\uFF0C\u63D0\u4F9B\u7F51\u9875\u6258\u7BA1\u548C\u4F20\u8F93\u7684\u670D\u52A1\uFF08\u5F53\u524D\u4E3A GitHub Pages \u53CA\u5185\u5BB9\u5206\u53D1\u7F51\u7EDC\uFF09\u53EF\u80FD\u4F1A\u8BB0\u5F55\u5E38\u89C4\u8BBF\u95EE\u65E5\u5FD7\uFF0C\u4F8B\u5982 IP \u5730\u5740\u3001\u8BBF\u95EE\u65F6\u95F4\u3001\u6D4F\u89C8\u5668\u7C7B\u578B\u7B49\u3002\u8FD9\u662F\u8BBF\u95EE\u516C\u5F00\u7F51\u9875\u65F6\u7684\u5E38\u89C1\u505A\u6CD5\u3002\u672C\u6E38\u620F\u4E0D\u4F9D\u636E\u8FD9\u4E9B\u65E5\u5FD7\u8BC6\u522B\u4F60\u7684\u8EAB\u4EFD\uFF0C\u5F00\u53D1\u8005\u4E5F\u4E0D\u4F1A\u53E6\u5916\u642D\u5EFA\u670D\u52A1\u5668\u6765\u6C47\u96C6\u8FD9\u4E9B\u65E5\u5FD7\u3002",
+    "3. \u5185\u8D2D\u3001\u5E7F\u544A\u4E0E\u7B2C\u4E09\u65B9\u670D\u52A1",
+    "\u672C\u7248\u672C\u4E0D\u542B\u5185\u8D2D\uFF0C\u4E5F\u4E0D\u63D0\u4F9B\u8D26\u53F7\u3001\u6392\u884C\u699C\u670D\u52A1\u5668\u6216\u793E\u4EA4\u529F\u80FD\u3002",
+    "\u672C\u7248\u672C\u7684\u5E7F\u544A\u80FD\u529B\u5904\u4E8E\u5173\u95ED\u72B6\u6001\uFF0C\u4E0D\u4F1A\u5C55\u793A\u6FC0\u52B1\u5E7F\u544A\u6216\u63D2\u5C4F\u5E7F\u544A\uFF0C\u4E5F\u672A\u63A5\u5165\u7EDF\u8BA1\u5206\u6790\u6216\u5E7F\u544A SDK\u3002\u82E5\u65E5\u540E\u5F00\u542F\u5E7F\u544A\u3001\u63A5\u5165\u7B2C\u4E09\u65B9\u670D\u52A1\u6216\u589E\u52A0\u9700\u8981\u6536\u96C6\u4FE1\u606F\u7684\u529F\u80FD\uFF0C\u6211\u4EEC\u4F1A\u4E8B\u5148\u66F4\u65B0\u672C\u653F\u7B56\uFF0C\u5E76\u5728\u6E38\u620F\u5185\u8BF4\u660E\u3002",
+    "4. \u672A\u6210\u5E74\u4EBA",
+    "\u672C\u6E38\u620F\u5EFA\u8BAE 12 \u5468\u5C81\u53CA\u4EE5\u4E0A\u7684\u73A9\u5BB6\u4F7F\u7528\u3002\u672A\u6EE1 18 \u5468\u5C81\u7684\u672A\u6210\u5E74\u4EBA\u5E94\u5728\u76D1\u62A4\u4EBA\u540C\u610F\u548C\u6307\u5BFC\u4E0B\u4F7F\u7528\u3002\u6211\u4EEC\u4E0D\u4F1A\u4E3B\u52A8\u6536\u96C6\u672A\u6210\u5E74\u4EBA\u7684\u4E2A\u4EBA\u8EAB\u4EFD\u4FE1\u606F\u3002\u66F4\u5177\u4F53\u7684\u5185\u5BB9\u8BF4\u660E\u89C1\u300A\u9002\u9F84\u63D0\u793A\u300B\u3002",
+    "5. \u4F60\u7684\u9009\u62E9",
+    "\u4F60\u53EF\u4EE5\u968F\u65F6\u505C\u6B62\u4F7F\u7528\u672C\u6E38\u620F\u3002\u4F60\u4E5F\u53EF\u4EE5\u901A\u8FC7\u6D4F\u89C8\u5668\u7684\u7AD9\u70B9\u6570\u636E/\u7F13\u5B58\u6E05\u7406\u529F\u80FD\uFF0C\u5220\u9664\u672C\u6E38\u620F\u4FDD\u5B58\u5728\u672C\u5730\u7684\u6210\u7EE9\u548C\u97F3\u6548\u8BBE\u7F6E\u3002",
+    "6. \u653F\u7B56\u53D8\u66F4",
+    "\u82E5\u672C\u653F\u7B56\u6709\u66F4\u65B0\uFF0C\u6211\u4EEC\u4F1A\u4FEE\u6539\u672C\u9875\u7684\u751F\u6548\u65E5\u671F\uFF0C\u5E76\u5728\u6E38\u620F\u5185\u516C\u5E03\u66F4\u65B0\u540E\u7684\u8BF4\u660E\u3002\u5728\u66F4\u65B0\u751F\u6548\u540E\u7EE7\u7EED\u4F7F\u7528\u672C\u6E38\u620F\uFF0C\u5373\u8868\u793A\u4F60\u4E86\u89E3\u66F4\u65B0\u540E\u7684\u505A\u6CD5\u3002"
+  ];
+  var LEGAL_AGE_TITLE = "\u9002\u9F84\u63D0\u793A";
+  var LEGAL_AGE = [
+    "\u6E38\u620F\u540D\u79F0\uFF1A\u8DEF\u53E3\u706B\u529B",
+    "\u9002\u9F84\u8303\u56F4\uFF1A12 \u5468\u5C81\u53CA\u4EE5\u4E0A",
+    "\u672C\u63D0\u793A\u7528\u4E8E\u8BF4\u660E\u6E38\u620F\u7684\u4E3B\u8981\u5185\u5BB9\uFF0C\u5E2E\u52A9\u76D1\u62A4\u4EBA\u548C\u73A9\u5BB6\u5224\u65AD\u662F\u5426\u9002\u5408\u6E38\u73A9\u3002\u5982\u672C\u6E38\u620F\u65E5\u540E\u63D0\u4EA4\u5E94\u7528\u5546\u5E97\u6216\u5C0F\u6E38\u620F\u5E73\u53F0\u5BA1\u6838\uFF0C\u6700\u7EC8\u9002\u9F84\u6807\u8BC6\u4EE5\u5E73\u53F0\u5BA1\u6838\u7ED3\u679C\u4E3A\u51C6\u3002",
+    "\u5185\u5BB9\u8BF4\u660E",
+    "\u8FD9\u662F\u4E00\u6B3E\u5361\u901A\u3001Q \u7248\u753B\u98CE\u7684\u4F11\u95F2\u5C04\u51FB\u6E38\u620F\u3002\u73A9\u5BB6\u5DE6\u53F3\u79FB\u52A8\u5C0F\u961F\uFF0C\u5C04\u51FB\u4E3A\u81EA\u52A8\u8FDB\u884C\uFF0C\u76EE\u6807\u662F\u5728\u8DEF\u53E3\u4E24\u4FA7\u5C3D\u53EF\u80FD\u575A\u6301\u66F4\u4E45\u3002",
+    "\u6E38\u620F\u4E2D\u4F1A\u51FA\u73B0\u5361\u901A\u98CE\u683C\u7684\u611F\u67D3\u4F53\u548C\u8F7B\u5EA6\u5BF9\u6297\uFF0C\u4F46\u6CA1\u6709\u5199\u5B9E\u8840\u8165\u3001\u80A2\u89E3\u6216\u8FC7\u5EA6\u6050\u6016\u7684\u8868\u73B0\uFF0C\u4E5F\u4E0D\u4F7F\u7528\u76F8\u5173\u7684\u5199\u5B9E\u5316\u7528\u8BED\u3002",
+    "\u6E38\u620F\u8FC7\u7A0B\u4E2D\u53EF\u80FD\u51FA\u73B0\u65F6\u95F4\u538B\u529B\u3001\u5173\u5361\u4E8B\u4EF6\u548C\u5931\u8D25\u7ED3\u7B97\uFF0C\u90E8\u5206\u573A\u666F\uFF08\u4F8B\u5982\u591C\u95F4\u8DEF\u53E3\u3001\u7A81\u7136\u6765\u88AD\uFF09\u53EF\u80FD\u5E26\u6765\u8F7B\u5EA6\u7D27\u5F20\uFF0C\u4F46\u4E0D\u542B\u6050\u6016\u9898\u6750\u3002",
+    "\u672C\u6E38\u620F\u6CA1\u6709\u73A9\u5BB6\u4E4B\u95F4\u7684\u804A\u5929\u3001\u7EC4\u961F\u6216\u7528\u6237\u751F\u6210\u5185\u5BB9\uFF0C\u4E5F\u4E0D\u4F1A\u5F15\u5BFC\u6DFB\u52A0\u964C\u751F\u4EBA\u3002",
+    "\u672C\u7248\u672C\u6CA1\u6709\u5185\u8D2D\uFF0C\u4E5F\u4E0D\u51FA\u552E\u968F\u673A\u62BD\u53D6\u7C7B\u9053\u5177\u3002\u5E7F\u544A\u80FD\u529B\u5F53\u524D\u5173\u95ED\u3002",
+    "\u6E38\u620F\u4F1A\u5728\u672C\u5730\u4FDD\u5B58\u6700\u597D\u6210\u7EE9\u548C\u97F3\u6548\u8BBE\u7F6E\uFF0C\u4E0D\u8981\u6C42\u521B\u5EFA\u8D26\u53F7\u3002",
+    "\u4F7F\u7528\u5EFA\u8BAE",
+    "\u8BF7\u5408\u7406\u5B89\u6392\u6E38\u620F\u65F6\u95F4\uFF0C\u907F\u514D\u957F\u65F6\u95F4\u8FDE\u7EED\u6E38\u73A9\u3002",
+    "\u672A\u6EE1 18 \u5468\u5C81\u7684\u73A9\u5BB6\uFF0C\u5EFA\u8BAE\u5728\u76D1\u62A4\u4EBA\u6307\u5BFC\u4E0B\u4F7F\u7528\uFF0C\u5E76\u9075\u5B88\u5F53\u5730\u5173\u4E8E\u672A\u6210\u5E74\u4EBA\u4F7F\u7528\u7F51\u7EDC\u548C\u6E38\u620F\u7684\u76F8\u5173\u89C4\u5B9A\u3002",
+    "\u5982\u5BF9\u5185\u5BB9\u6216\u9002\u9F84\u8303\u56F4\u6709\u7591\u95EE\uFF0C\u8BF7\u53D1\u4FE1\u81F3 pengnanhu81@gmail.com\u3002",
+    "\u672C\u63D0\u793A\u53D1\u5E03\u4E8E 2026 \u5E74 11 \u6708 26 \u65E5\u3002"
+  ];
+  function legalParagraphs(page) {
+    if (page === "privacy") return { title: LEGAL_PRIVACY_TITLE, lines: LEGAL_PRIVACY };
+    if (page === "age") return { title: LEGAL_AGE_TITLE, lines: LEGAL_AGE };
+    return { title: LEGAL_SUMMARY_TITLE, lines: LEGAL_SUMMARY };
+  }
+
   // src/utils.ts
   function clamp(v, lo, hi) {
     return v < lo ? lo : v > hi ? hi : v;
@@ -1339,12 +1458,22 @@
   }
   var TREE_ZS = [15, 20, 25, 31, 37, 44, 51, 58, 66, 74, 83];
   var HOUSE_ZS = [17, 26, 35, 44, 53, 62, 71, 81];
-  function drawWorld(ctx, camX, time, shakeX, shakeY, scene = "day") {
+  var NIGHT_TREE_ZS = [18, 29, 48, 67, 86];
+  var NIGHT_HOUSE_ZS = [14, 21, 31, 41, 50, 61, 73, 88];
+  var FORK_HOUSE_ZS = [16, 28, 40, 55, 69, 84];
+  function isNight(scene) {
+    return scene === "night" || scene === "fork";
+  }
+  function drawWorld(ctx, camX, time, shakeX, shakeY, scene = "day", hold = false) {
     ctx.save();
     ctx.translate(shakeX, shakeY);
     drawSky(ctx, camX, scene);
     const grass = ctx.createLinearGradient(0, HORIZON_Y, 0, CANVAS_H);
-    if (scene === "night") {
+    if (scene === "fork") {
+      grass.addColorStop(0, "#2E3A4E");
+      grass.addColorStop(0.45, "#243446");
+      grass.addColorStop(1, "#1C2A38");
+    } else if (scene === "night") {
       grass.addColorStop(0, "#3A4A5A");
       grass.addColorStop(0.45, "#2C3C3A");
       grass.addColorStop(1, "#24342C");
@@ -1356,9 +1485,10 @@
     ctx.fillStyle = grass;
     ctx.fillRect(0, HORIZON_Y + 6, CANVAS_W, CANVAS_H - HORIZON_Y);
     drawRoad(ctx, camX, time, scene);
-    if (scene === "night") drawCrossAlley(ctx, camX, time);
+    if (isNight(scene)) drawCrossAlley(ctx, camX, time);
+    if (scene === "fork") drawForkPlaza(ctx, camX, time, hold);
     drawRoadside(ctx, camX, time, scene);
-    if (scene === "night") drawLamps(ctx, camX, time);
+    if (isNight(scene)) drawLamps(ctx, camX, time);
     ctx.restore();
   }
   function drawSky(ctx, camX, scene = "day") {
@@ -1382,8 +1512,8 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, CANVAS_W, horizon + 20);
     }
-    if (scene === "night") {
-      ctx.fillStyle = "rgba(18, 24, 48, 0.55)";
+    if (isNight(scene)) {
+      ctx.fillStyle = scene === "fork" ? "rgba(10, 16, 40, 0.62)" : "rgba(18, 24, 48, 0.55)";
       ctx.fillRect(0, 0, CANVAS_W, horizon + 24);
       ctx.fillStyle = "rgba(255,245,210,0.8)";
       for (let i = 0; i < 14; i++) {
@@ -1431,7 +1561,59 @@
     ctx.lineTo(curbR3.sx, curbR3.sy);
     ctx.closePath();
     ctx.fill();
-    drawDashLine(ctx, 0, camX, scene === "night" ? "#D6C98A" : "#F3EEDC", 7, time);
+    if (scene === "day") {
+      drawDashLine(ctx, 0, camX, "#F3EEDC", 7, time);
+    } else if (scene === "night") {
+      drawMedian(ctx, camX, 0.7, "#5C6574");
+      drawDashLine(ctx, -2.15, camX, "#D6C98A", 5, time);
+      drawDashLine(ctx, 2.15, camX, "#D6C98A", 5, time);
+    } else {
+      drawMedian(ctx, camX, 1.35, "#6A5A3A");
+      drawDashLine(ctx, -2.55, camX, "#E8D48A", 5, time);
+      drawDashLine(ctx, 2.55, camX, "#E8D48A", 5, time);
+      drawDashLine(ctx, 0, camX, "#F4E7B0", 6, time);
+    }
+  }
+  function drawMedian(ctx, camX, half, color) {
+    const farL = pr(-half, 0.02, SPAWN_Z + 10, camX);
+    const farR = pr(half, 0.02, SPAWN_Z + 10, camX);
+    const nearL = pr(-half, 0.02, 8.5, camX);
+    const nearR = pr(half, 0.02, 8.5, camX);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(farL.sx, farL.sy);
+    ctx.lineTo(farR.sx, farR.sy);
+    ctx.lineTo(nearR.sx, nearR.sy);
+    ctx.lineTo(nearL.sx, nearL.sy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  function drawForkPlaza(ctx, camX, time, hold) {
+    const z = wrapZ(30, time * 0.08, 18, 50);
+    const tip = pr(0, 0.04, z + 6, camX);
+    const left = pr(-3.4, 0.04, z - 1.5, camX);
+    const right = pr(3.4, 0.04, z - 1.5, camX);
+    ctx.fillStyle = hold ? "rgba(232, 200, 90, 0.42)" : "rgba(160, 140, 90, 0.35)";
+    ctx.beginPath();
+    ctx.moveTo(tip.sx, tip.sy);
+    ctx.lineTo(left.sx, left.sy);
+    ctx.lineTo(right.sx, right.sy);
+    ctx.closePath();
+    ctx.fill();
+    if (hold) {
+      ctx.fillStyle = "rgba(255, 220, 110, 0.22)";
+      const a = pr(-1.2, 0.03, SPAWN_Z + 6, camX);
+      const b = pr(1.2, 0.03, SPAWN_Z + 6, camX);
+      const c = pr(1.2, 0.03, 9, camX);
+      const d = pr(-1.2, 0.03, 9, camX);
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.lineTo(c.sx, c.sy);
+      ctx.lineTo(d.sx, d.sy);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
   function wrapZ(base, time, minZ, maxZ) {
     const span = maxZ - minZ;
@@ -1508,16 +1690,25 @@
   }
   function drawRoadside(ctx, camX, time, scene = "day") {
     const props = [];
-    for (let i = 0; i < TREE_ZS.length; i++) {
-      props.push({ kind: "tree", side: -1, z: wrapZ(TREE_ZS[i], time, 11, 92), variant: i % 2 });
-      props.push({ kind: "tree", side: 1, z: wrapZ(TREE_ZS[i] + 3.4, time, 11, 92), variant: (i + 1) % 2 });
+    const trees = scene === "day" ? TREE_ZS : scene === "night" ? NIGHT_TREE_ZS : [];
+    const houses = scene === "day" ? HOUSE_ZS : scene === "night" ? NIGHT_HOUSE_ZS : FORK_HOUSE_ZS;
+    const treeSpan = scene === "night" ? 100 : 92;
+    const houseSpan = scene === "fork" ? 102 : 94;
+    for (let i = 0; i < trees.length; i++) {
+      props.push({ kind: "tree", side: -1, z: wrapZ(trees[i], time, 11, treeSpan), variant: i % 2 });
+      if (scene === "day") {
+        props.push({ kind: "tree", side: 1, z: wrapZ(trees[i] + 3.4, time, 11, treeSpan), variant: (i + 1) % 2 });
+      }
     }
-    for (let i = 0; i < HOUSE_ZS.length; i++) {
-      props.push({ kind: "house", side: -1, z: wrapZ(HOUSE_ZS[i], time, 14, 94), variant: i % 4 });
-      props.push({ kind: "house", side: 1, z: wrapZ(HOUSE_ZS[i] + 5.5, time, 14, 94), variant: (i + 2) % 4 });
+    for (let i = 0; i < houses.length; i++) {
+      const off = scene === "night" ? 7.2 : scene === "fork" ? 9 : 5.5;
+      props.push({ kind: "house", side: -1, z: wrapZ(houses[i], time, 14, houseSpan), variant: scene === "day" ? i % 4 : (i + 1) % 4 });
+      props.push({ kind: "house", side: 1, z: wrapZ(houses[i] + off, time, 14, houseSpan), variant: (i + 2) % 4 });
     }
+    const alleyZ = isNight(scene) ? wrapZ(38, time * 0.15, 22, 52) : -99;
     props.sort((a, b) => b.z - a.z);
     for (const p of props) {
+      if (Math.abs(p.z - alleyZ) < 4.5) continue;
       if (p.kind === "tree") {
         const x = p.side < 0 ? -ROAD_HALF - 1.85 : ROAD_HALF + 1.9;
         const q = pr(x, 0, p.z, camX);
@@ -1526,12 +1717,14 @@
         const id = p.variant === 0 ? "tree_0" : "tree_1";
         drawSprite(ctx, id, q.sx, q.sy + 4 * k, 170 * k, { flip: p.side > 0 });
       } else {
-        const x = p.side < 0 ? -ROAD_HALF - 4.35 : ROAD_HALF + 4.45;
+        const inset = scene === "fork" ? 5.6 : scene === "night" ? 3.55 : 4.35;
+        const x = p.side < 0 ? -ROAD_HALF - inset : ROAD_HALF + inset + 0.1;
         const q = pr(x, 0, p.z, camX);
         const k = q.scale;
         if (k < 0.08) continue;
         const id = "house_" + p.variant;
-        drawSprite(ctx, id, q.sx, q.sy + 6 * k, 230 * k, { flip: p.side > 0 });
+        const h = scene === "night" ? 250 * k : scene === "fork" ? 260 * k : 230 * k;
+        drawSprite(ctx, id, q.sx, q.sy + 6 * k, h, { flip: p.side > 0 });
       }
     }
   }
@@ -1743,7 +1936,7 @@
     const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
     const alpha = Math.max(0.12, Math.min(0.42, pulse));
     ctx.save();
-    ctx.fillStyle = kind === "rush" ? `rgba(210, 128, 32, ${alpha})` : kind === "alley" ? `rgba(120, 80, 200, ${alpha})` : `rgba(210, 48, 40, ${alpha})`;
+    ctx.fillStyle = kind === "rush" ? `rgba(210, 128, 32, ${alpha})` : kind === "alley" ? `rgba(120, 80, 200, ${alpha})` : kind === "hold" ? `rgba(230, 190, 70, ${alpha + 0.08})` : `rgba(210, 48, 40, ${alpha})`;
     ctx.beginPath();
     ctx.moveTo(farL.sx, farL.sy);
     ctx.lineTo(farR.sx, farR.sy);
@@ -2110,33 +2303,60 @@
     if (y >= CANVAS_H - 110 && y <= CANVAS_H - 50) return "legal";
     return null;
   }
-  function drawLegal(ctx) {
+  var LEGAL_BACK_Y = CANVAS_H - 132;
+  var LEGAL_LINK_Y = CANVAS_H - 214;
+  function legalMaxScroll(page) {
+    const { lines } = legalParagraphs(page);
+    const charsPerLine = page === "summary" ? 16 : 20;
+    let h = 0;
+    for (const para of lines) {
+      const rows = Math.max(1, Math.ceil(para.length / charsPerLine));
+      h += rows * 34 + 14;
+    }
+    const view = page === "summary" ? CANVAS_H - 430 : CANVAS_H - 360;
+    return Math.max(0, h - view);
+  }
+  function drawLegal(ctx, page = "summary", scrollY = 0) {
     dim(ctx);
+    const boxY = 70;
+    const boxH = CANVAS_H - 70 - 36;
     ctx.fillStyle = "rgba(255,248,230,0.97)";
-    roundRect(ctx, 70, 280, CANVAS_W - 140, 640, 22);
+    roundRect(ctx, 48, boxY, CANVAS_W - 96, boxH, 22);
     ctx.fill();
+    const { title, lines } = legalParagraphs(page);
     ctx.fillStyle = "#5A3E22";
     ctx.textAlign = "center";
-    ctx.font = 'bold 30px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.fillText("\u9690\u79C1\u653F\u7B56\u4E0E\u9002\u9F84\u63D0\u793A", CANVAS_W / 2, 350);
-    ctx.font = '20px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.fillStyle = "rgba(90,62,34,0.88)";
-    const lines = [
-      "\u672C\u9875\u4E3A\u5360\u4F4D\u8BF4\u660E\uFF0C\u6B63\u5F0F\u4E0A\u67B6\u524D\u5C06\u66FF\u6362\u4E3A\u5B8C\u6574\u6587\u6848\u3002",
-      "\u672C\u6E38\u620F\u4E3A\u4F11\u95F2\u5C04\u51FB\uFF0C\u9002\u5408 12 \u5C81\u53CA\u4EE5\u4E0A\u73A9\u5BB6\u3002",
-      "\u4E0D\u6536\u96C6\u4E2A\u4EBA\u8EAB\u4EFD\u4FE1\u606F\uFF0C\u6210\u7EE9\u4EC5\u4FDD\u5B58\u5728\u672C\u5730\u3002",
-      "\u4E0D\u542B\u5185\u8D2D\u3002\u5E7F\u544A\u80FD\u529B\u672C\u7248\u672C\u5173\u95ED\u3002",
-      "\u8BF7\u5408\u7406\u5B89\u6392\u6E38\u620F\u65F6\u95F4\u3002"
-    ];
-    let y = 420;
-    for (const line of lines) {
-      wrapText(ctx, line, CANVAS_W / 2, y, CANVAS_W - 220, 32);
-      y += 70;
+    ctx.textBaseline = "alphabetic";
+    ctx.font = 'bold 32px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.fillText(title, CANVAS_W / 2, 128);
+    const clipTop = 150;
+    const clipBottom = page === "summary" ? LEGAL_LINK_Y - 16 : LEGAL_BACK_Y - 16;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(70, clipTop, CANVAS_W - 140, clipBottom - clipTop);
+    ctx.clip();
+    ctx.font = '20px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
+    ctx.fillStyle = "rgba(90,62,34,0.9)";
+    ctx.textAlign = "left";
+    let y = clipTop + 28 + scrollY;
+    const maxW = CANVAS_W - 200;
+    for (const para of lines) {
+      y = wrapTextLeft(ctx, para, 100, y, maxW, 32) + 14;
     }
-    drawButton(ctx, CANVAS_W / 2 - 110, 800, 220, 64, "#6B8F3A", "\u8FD4\u56DE");
+    ctx.restore();
+    if (page === "summary") {
+      drawButton(ctx, 80, LEGAL_LINK_Y, 250, 58, "#6B8F3A", "\u9690\u79C1\u653F\u7B56");
+      drawButton(ctx, CANVAS_W - 80 - 250, LEGAL_LINK_Y, 250, 58, "#6B8F3A", "\u9002\u9F84\u63D0\u793A");
+    }
+    drawButton(ctx, CANVAS_W / 2 - 110, LEGAL_BACK_Y, 220, 64, "#6B8F3A", "\u8FD4\u56DE");
   }
-  function legalHit(x, y) {
-    return x >= CANVAS_W / 2 - 110 && x <= CANVAS_W / 2 + 110 && y >= 800 && y <= 864;
+  function legalHit(x, y, page = "summary") {
+    if (x >= CANVAS_W / 2 - 110 && x <= CANVAS_W / 2 + 110 && y >= LEGAL_BACK_Y && y <= LEGAL_BACK_Y + 64) return "back";
+    if (page === "summary") {
+      if (x >= 80 && x <= 330 && y >= LEGAL_LINK_Y && y <= LEGAL_LINK_Y + 58) return "privacy";
+      if (x >= CANVAS_W - 80 - 250 && x <= CANVAS_W - 80 && y >= LEGAL_LINK_Y && y <= LEGAL_LINK_Y + 58) return "age";
+    }
+    return null;
   }
   function drawResult(ctx, kills, time, peak, best) {
     dim(ctx);
@@ -2191,14 +2411,15 @@
     ctx.fillStyle = "rgba(30,22,16,0.48)";
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   }
-  function wrapText(ctx, text, x, y, maxW, lineH) {
+  function wrapTextLeft(ctx, text, x, y, maxW, lineH) {
     const chars = text.split("");
     let line = "";
     let yy = y;
-    ctx.textAlign = "center";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
     for (const ch of chars) {
       const test = line + ch;
-      if (ctx.measureText(test).width > maxW) {
+      if (ctx.measureText(test).width > maxW && line) {
         ctx.fillText(line, x, yy);
         line = ch;
         yy += lineH;
@@ -2206,7 +2427,11 @@
         line = test;
       }
     }
-    if (line) ctx.fillText(line, x, yy);
+    if (line) {
+      ctx.fillText(line, x, yy);
+      yy += lineH;
+    }
+    return yy;
   }
 
   // src/squad.ts
@@ -2416,6 +2641,8 @@
       this.runSeed = 1;
       this.scene = "day";
       this.bannerText = null;
+      this.legalPage = "summary";
+      this.legalScroll = 0;
       this.firstRushDone = false;
       this.quietUntil = 0;
       this.mercySpawned = false;
@@ -2429,6 +2656,14 @@
       this.nextAlleyI = 0;
       this.nextPincerAt = 0;
       this.nextAlleyAt = 0;
+      this.exclusiveUntil = 0;
+      this.goldSafeUntil = 0;
+      this.rightHoldUntil = 0;
+      this.goldWindowOpen = false;
+      this.holdStarted = false;
+      this.holdUntil = 0;
+      this.nextHoldAt = 0;
+      this.alleyFacing = "both";
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2507,6 +2742,10 @@
         scene: this.scene,
         shieldTime: this.squad.shieldTime,
         quiet: this.time < this.quietUntil,
+        goldSafe: this.time < this.goldSafeUntil,
+        hold: this.namedKind === "hold" || this.holdStarted && this.time < this.holdUntil,
+        legalPage: this.legalPage,
+        legalScroll: this.legalScroll,
         props: this.props.pool.active.map((p) => ({
           kind: p.kind,
           lane: p.lane,
@@ -2557,6 +2796,14 @@
       this.nextAlleyI = 0;
       this.nextPincerAt = pincerTime(0, this.runSeed);
       this.nextAlleyAt = alleyTime(0, this.runSeed);
+      this.exclusiveUntil = 0;
+      this.goldSafeUntil = 0;
+      this.rightHoldUntil = 0;
+      this.goldWindowOpen = false;
+      this.holdStarted = false;
+      this.holdUntil = 0;
+      this.nextHoldAt = holdTime(this.runSeed);
+      this.alleyFacing = "both";
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -2572,6 +2819,12 @@
     update(dt) {
       const clicks = this.input.consumeClicks();
       for (const c of clicks) this.handleClick(c.x, c.y);
+      if (this.state === "legal") {
+        this.legalScroll += this.input.consumeScroll(dt);
+        const max = legalMaxScroll(this.legalPage);
+        if (this.legalScroll > 0) this.legalScroll = 0;
+        if (this.legalScroll < -max) this.legalScroll = -max;
+      }
       if (this.state !== "playing") return;
       this.time += dt;
       this.hintTimer += dt;
@@ -2591,9 +2844,11 @@
       this.updateRush();
       this.updateNamed();
       this.updateAlleyDrift();
+      this.updateHold();
       this.gates.update(dt);
       this.props.update(dt);
-      this.enemies.update(dt);
+      const rightMul = this.time < this.rightHoldUntil ? 0 : 1;
+      this.enemies.update(dt, rightMul);
       this.shoot(dt);
       this.bullets.update(dt);
       this.collideBullets();
@@ -2609,9 +2864,10 @@
     }
     spawnDue() {
       const quiet = this.time < this.quietUntil;
+      const holdRight = this.time < this.hordeSkipUntil || this.time < this.rightHoldUntil;
       while (this.cursor < TIMELINE.length && TIMELINE[this.cursor].time <= this.time) {
         const ev = TIMELINE[this.cursor++];
-        if (quiet && ev.kind === "enemy") continue;
+        if (ev.kind === "enemy" && (quiet || holdRight && ev.lane === "right")) continue;
         this.applyEvent(ev);
         this.spawned.push(ev);
       }
@@ -2631,7 +2887,8 @@
       }
       while (this.time >= this.nextGateAt) {
         const t = this.nextGateAt;
-        const ev = endlessGateFor(this.endlessGateI, this.runSeed);
+        const raw = endlessGateFor(this.endlessGateI, this.runSeed);
+        const ev = softenGate(raw, t, this.squad.count, this.squad.peak);
         const pair = this.endlessGateI % 4 === 3;
         const pairKey = pair ? this.gates.nextPairKey() : 0;
         this.gates.spawn({
@@ -2653,7 +2910,7 @@
           this.hordeSkipUntil = t + 1.3;
         }
         this.endlessGateI += 1;
-        this.nextGateAt += ENDLESS_GATE_PERIOD;
+        this.nextGateAt += t >= SCENE_SHIFT_AT ? ENDLESS_GATE_PERIOD_LATE : ENDLESS_GATE_PERIOD;
       }
     }
     spawnEnemy(type, lane, opts) {
@@ -2692,16 +2949,25 @@
         this.goldExpiresAt = GOLD_GATE_AT + GOLD_GATE_LIFE;
       }
       if (this.goldExpiresAt > 0 && this.time >= this.goldExpiresAt) {
+        const wasWindow = this.goldWindowOpen;
         this.clearAmpGates();
         this.goldExpiresAt = 0;
+        this.goldWindowOpen = false;
         if (this.namedKind === "gold") {
           this.namedKind = null;
           this.bannerText = null;
         }
+        if (wasWindow && this.time >= this.exclusiveUntil) {
+          this.showNamed("goldEnd", "\u91D1\u95E8\u5173\u95ED\uFF01", GOLD_CLOSE_BANNER, void 0, true);
+        }
       }
       const due = goldWindowTime(this.nextGoldWindowI, this.runSeed);
       if (this.time >= due && this.time >= GOLD_GATE_AT + GOLD_GATE_LIFE) {
-        if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") {
+        if (this.time < this.exclusiveUntil) return;
+        if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley" || this.namedKind === "hold") {
+          return;
+        }
+        if (this.nextPincerAt - this.time < 4.2 && this.nextPincerAt >= this.time - 0.2) {
           return;
         }
         this.nextGoldWindowI += 1;
@@ -2714,8 +2980,26 @@
           stationary: true
         });
         this.goldExpiresAt = this.time + GOLD_WINDOW_LIFE;
+        this.goldWindowOpen = true;
         this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.time + GOLD_WINDOW_LULL);
-        this.showNamed("gold", "\u53F3\u9053\xD72\uFF01\u5FEB\u5207", 2.8);
+        this.rightHoldUntil = Math.max(this.rightHoldUntil, this.time + GOLD_WINDOW_LULL);
+        this.goldSafeUntil = Math.max(this.goldSafeUntil, this.time + GOLD_WINDOW_SAFE);
+        this.thinRightColumn();
+        this.showNamed("gold", "\u53F3\u9053\xD72\uFF01\u5FEB\u5207", 2.8, void 0, true);
+      }
+    }
+    thinRightColumn() {
+      const list = this.enemies.pool.active.slice();
+      let kept = 0;
+      for (const e of list) {
+        if (!e.alive || e.x <= 0.15) continue;
+        if (e.z < 18) continue;
+        if (e.z <= 52 && kept >= 1) {
+          this.particles.puff(e.x, 0.4, e.z, "#C9C0B0");
+          this.enemies.pool.release(e);
+          continue;
+        }
+        if (e.z <= 52) kept += 1;
       }
     }
     clearAmpGates() {
@@ -2727,19 +3011,35 @@
     updateScene() {
       if (this.scene === "day" && this.time >= SCENE_SHIFT_AT) {
         this.scene = "night";
-        if (!this.warningLane && !this.rushActive && !this.namedKind) {
-          this.showNamed("scene", "\u8FDB\u5165\u591C\u8DEF\u53E3\uFF01", 2.4);
-        }
+        this.grantNightStart();
+        this.pushEventsPast(this.time + SCENE_BANNER + 1.6);
+        this.showNamed("scene", "\u8FDB\u5165\u591C\u8DEF\u53E3\uFF01", SCENE_BANNER, void 0, true);
       }
     }
-    showNamed(kind, text, duration, spawnAt) {
+    grantNightStart() {
+      if (this.squad.weapon === "pistol" || this.squad.weaponTime < NIGHT_WEAPON_MIN) {
+        this.squad.equip("heavy");
+      }
+      this.squad.grantShield(NIGHT_SHIELD_DURATION);
+    }
+    pushEventsPast(until) {
+      if (this.nextWarningAt < until) this.nextWarningAt = until + 0.4;
+      if (this.nextRushAt < until) this.nextRushAt = until + 0.8;
+      if (this.nextPincerAt < until) this.nextPincerAt = until + 1.2;
+      if (this.nextAlleyAt < until) this.nextAlleyAt = until + 1.8;
+      if (this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
+    }
+    showNamed(kind, text, duration, spawnAt, exclusive = false) {
       this.namedKind = kind;
       this.bannerText = text;
       this.namedUntil = this.time + duration;
       this.namedSpawned = spawnAt == null;
       this.namedSpawnAt = spawnAt != null ? spawnAt : this.time;
+      if (exclusive) this.exclusiveUntil = Math.max(this.exclusiveUntil, this.namedUntil);
     }
     currentBanner() {
+      const exclusiveNamed = this.namedKind === "scene" || this.namedKind === "gold" || this.namedKind === "goldEnd" || this.namedKind === "hold";
+      if (exclusiveNamed && this.time < this.namedUntil && this.bannerText) return this.bannerText;
       if (this.warningLane) return this.warningLane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01";
       if (this.rushActive) return "\u5DE6\u9053\u6765\u88AD\uFF01";
       if (this.namedKind && this.time < this.namedUntil && this.bannerText) return this.bannerText;
@@ -2755,15 +3055,8 @@
           this.nextAlleyI += 1;
           this.nextAlleyAt = alleyTime(this.nextAlleyI, this.runSeed);
         }
-        if (this.namedKind !== "gold" && this.namedKind !== "scene") {
-          this.namedKind = null;
-          this.bannerText = null;
-        } else if (this.time >= this.namedUntil) {
-          if (this.namedKind !== "gold") {
-            this.namedKind = null;
-            this.bannerText = null;
-          }
-        }
+        this.namedKind = null;
+        this.bannerText = null;
       }
       if (this.namedKind === "pincer" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
         this.spawnPincerPack();
@@ -2773,14 +3066,40 @@
         this.spawnAlleyPack();
         this.namedSpawned = true;
       }
+      if (this.namedKind === "hold" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+        this.namedSpawned = true;
+      }
       if (this.namedKind || this.warningLane || this.rushActive || this.time < this.quietUntil) return;
+      if (this.time < this.exclusiveUntil || this.time < this.goldSafeUntil) return;
       if (this.time >= this.nextPincerAt && this.squad.count > 0) {
         this.showNamed("pincer", "\u5DE6\u53F3\u5939\u51FB\uFF01", PINCER_TELEGRAPH + PINCER_BANNER, this.time + PINCER_TELEGRAPH);
         return;
       }
-      if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene === "night") {
-        this.showNamed("alley", "\u5DF7\u53E3\u6765\u88AD\uFF01", ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
+      if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene !== "day") {
+        this.alleyFacing = alleySide(this.nextAlleyI, this.runSeed);
+        this.showNamed("alley", alleyBannerText(this.alleyFacing), ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
       }
+    }
+    updateHold() {
+      if (this.holdStarted) {
+        if (this.time >= this.holdUntil) {
+          this.holdStarted = false;
+          if (Math.abs(this.squad.x) > HOLD_MID && this.squad.count > 0) {
+            this.squad.lose(HOLD_DAMAGE);
+            this.shake = 0.32;
+            this.audio.play("red");
+          }
+        }
+        return;
+      }
+      if (this.scene === "day" || this.time < this.nextHoldAt || this.squad.count <= 0) return;
+      if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") return;
+      if (this.time < this.goldSafeUntil) return;
+      this.scene = "fork";
+      this.holdStarted = true;
+      this.holdUntil = this.time + HOLD_TELEGRAPH + HOLD_DURATION;
+      this.showNamed("hold", "\u5B88\u4F4F\u4E2D\u9053\uFF01", HOLD_TELEGRAPH + HOLD_DURATION, this.time + HOLD_TELEGRAPH, true);
+      this.pushEventsPast(this.holdUntil + 1.4);
     }
     spawnPincerPack() {
       const left = rushPack(this.time);
@@ -2794,18 +3113,19 @@
     }
     spawnAlleyPack() {
       const types = this.time >= 100 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
+      const side = this.alleyFacing;
       for (let i = 0; i < types.length; i++) {
+        let fromLeft = side === "left" || side === "both" && i % 2 === 0;
+        if (side === "right") fromLeft = false;
+        const x = fromLeft ? -ALLEY_SIDE_X - i * 0.15 : ALLEY_SIDE_X + i * 0.15;
         this.spawnEnemy(types[i], "mid", {
           z: ALLEY_SPAWN_Z - i * 1.4,
-          x: (i - 1) * 0.45,
-          driftX: this.squad.x
+          x,
+          driftX: fromLeft ? LANE_X * 0.15 : -LANE_X * 0.15
         });
       }
     }
     updateAlleyDrift() {
-      for (const e of this.enemies.pool.active) {
-        if (e.driftX != null) e.driftX = this.squad.x;
-      }
     }
     spawnPropsDue() {
       while (this.propCursor < PROP_EVENTS.length && PROP_EVENTS[this.propCursor].time <= this.time) {
@@ -2846,8 +3166,13 @@
         }
         return;
       }
-      if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil) {
-        this.warningLane = laneOfX(this.squad.x);
+      if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
+        const lane = laneOfX(this.squad.x);
+        if (lane === "right" && this.time < this.goldSafeUntil) {
+          this.nextWarningAt = this.goldSafeUntil + 0.35;
+          return;
+        }
+        this.warningLane = lane;
         this.warningImpactAt = this.time + WARNING_TELEGRAPH;
       }
     }
@@ -2892,7 +3217,7 @@
         }
         return;
       }
-      if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil) {
+      if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
         if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
           this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
           return;
@@ -2910,6 +3235,7 @@
         return;
       }
       if (ev.kind === "gate" && ev.gate) {
+        const ev2 = softenGate(ev, this.time, this.squad.count, this.squad.peak);
         const tKey = Math.round(ev.time * 100);
         let pairKey = (_a = this.pendingPairs.get(tKey)) != null ? _a : 0;
         const sameTimeOther = TIMELINE.some(
@@ -2922,11 +3248,11 @@
           }
         }
         this.gates.spawn({
-          kind: ev.gate,
-          lane: ev.lane,
-          value: ev.value,
-          weapon: ev.weapon,
-          label: ev.label || "",
+          kind: ev2.gate,
+          lane: ev2.lane,
+          value: ev2.value,
+          weapon: ev2.weapon,
+          label: ev2.label || "",
           pairKey
         });
       }
@@ -3039,7 +3365,7 @@
     }
     onPropOpened(p) {
       if (p.kind === "cage") {
-        this.squad.add(CAGE_REWARD);
+        this.squad.add(cageRewardAt(this.time, this.squad.peak));
         this.particles.puff(p.x, 0.6, p.z, "#E8D48A");
         this.audio.play("gate");
         this.props.pool.release(p);
@@ -3176,11 +3502,25 @@
         }
         const hit = titleHit(x, y);
         if (hit === "start") this.beginRun();
-        else if (hit === "legal") this.state = "legal";
+        else if (hit === "legal") {
+          this.legalPage = "summary";
+          this.legalScroll = 0;
+          this.state = "legal";
+        }
         return;
       }
       if (this.state === "legal") {
-        if (legalHit(x, y)) this.state = "title";
+        const hit = legalHit(x, y, this.legalPage);
+        if (hit === "back") {
+          if (this.legalPage === "summary") this.state = "title";
+          else {
+            this.legalPage = "summary";
+            this.legalScroll = 0;
+          }
+        } else if (hit === "privacy" || hit === "age") {
+          this.legalPage = hit;
+          this.legalScroll = 0;
+        }
         return;
       }
       if (this.state === "win" || this.state === "fail") {
@@ -3196,7 +3536,7 @@
       const camX = this.squad.x * 0.32;
       const sh = this.shake > 0 ? (Math.random() * 2 - 1) * 10 * this.shake : 0;
       const sv = this.shake > 0 ? (Math.random() * 2 - 1) * 8 * this.shake : 0;
-      drawWorld(ctx, camX, this.animTime, sh, sv, this.scene);
+      drawWorld(ctx, camX, this.animTime, sh, sv, this.scene, this.namedKind === "hold" || this.holdStarted && this.time < this.holdUntil);
       const items = [];
       if (this.warningLane && this.state === "playing") {
         items.push({
@@ -3219,7 +3559,16 @@
       } else if (this.namedKind === "alley" && this.state === "playing") {
         items.push({
           z: 28,
-          draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "alley")
+          draw: () => {
+            const side = this.alleyFacing;
+            if (side === "left" || side === "both") drawLaneWarning(ctx, "left", camX, this.namedSpawnAt - this.time, "alley");
+            if (side === "right" || side === "both") drawLaneWarning(ctx, "right", camX, this.namedSpawnAt - this.time, "alley");
+          }
+        });
+      } else if (this.namedKind === "hold" && this.state === "playing") {
+        items.push({
+          z: 26,
+          draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "hold")
         });
       }
       for (const g of this.gates.pool.active) {
@@ -3261,7 +3610,7 @@
       } else if (this.state === "title") {
         drawTitle(ctx, this.best, this.audio.muted);
       } else if (this.state === "legal") {
-        drawLegal(ctx);
+        drawLegal(ctx, this.legalPage, this.legalScroll);
       } else {
         drawResult(ctx, this.kills, this.time, this.squad.peak, this.best);
       }

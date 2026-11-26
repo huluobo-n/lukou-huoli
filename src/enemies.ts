@@ -98,7 +98,7 @@ export class Enemies {
     return e;
   }
 
-  update(dt: number): void {
+  update(dt: number, rightMul = 1): void {
     const list = this.pool.active;
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
@@ -126,7 +126,8 @@ export class Enemies {
       if (e.type === "jumper") {
         this.updateJumper(e, dt);
       }
-      e.z -= BASE_SPEED * def.speed * mul * dt;
+      const laneMul = e.x > 0.15 ? rightMul : 1;
+      e.z -= BASE_SPEED * def.speed * mul * laneMul * dt;
       if (e.z < DESPAWN_Z || !e.alive) this.pool.releaseAt(i);
     }
   }
