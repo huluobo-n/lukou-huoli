@@ -10,11 +10,13 @@ export interface Bullet {
   damage: number;
   /** 已穿过金色增幅门 */
   amplified: boolean;
+  heavy: boolean;
 }
 
 function resetB(b: Bullet): void {
   b.alive = false;
   b.amplified = false;
+  b.heavy = false;
 }
 
 export class Bullets {
@@ -26,13 +28,14 @@ export class Bullets {
     pz: TEAM_Z,
     damage: 1,
     amplified: false,
+    heavy: false,
   }), resetB);
 
   clear(): void {
     this.pool.clear();
   }
 
-  spawn(x: number, z: number, damage: number): Bullet | null {
+  spawn(x: number, z: number, damage: number, opts?: { heavy?: boolean }): Bullet | null {
     const b = this.pool.acquire();
     if (!b) return null;
     b.alive = true;
@@ -42,6 +45,7 @@ export class Bullets {
     b.pz = b.z;
     b.damage = damage;
     b.amplified = false;
+    b.heavy = !!opts?.heavy;
     return b;
   }
 

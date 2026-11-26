@@ -8,9 +8,11 @@ import {
   LANE_X,
   NEAR_Y,
   ROAD_HALF,
+  CAGE_LABEL,
   SPAWN_Z,
   TEAM_Z,
   WEAPONS,
+  type WeaponId,
 } from "./config";
 import {
   drawSprite,
@@ -48,26 +50,35 @@ export function drawWorld(
   time: number,
   shakeX: number,
   shakeY: number,
+  scene: "day" | "night" = "day",
 ): void {
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
-  drawSky(ctx, camX);
+  drawSky(ctx, camX, scene);
 
   const grass = ctx.createLinearGradient(0, HORIZON_Y, 0, CANVAS_H);
-  grass.addColorStop(0, "#C8C49A");
-  grass.addColorStop(0.4, "#B3B880");
-  grass.addColorStop(1, "#8EA86A");
+  if (scene === "night") {
+    grass.addColorStop(0, "#3A4A5A");
+    grass.addColorStop(0.45, "#2C3C3A");
+    grass.addColorStop(1, "#24342C");
+  } else {
+    grass.addColorStop(0, "#C8C49A");
+    grass.addColorStop(0.4, "#B3B880");
+    grass.addColorStop(1, "#8EA86A");
+  }
   ctx.fillStyle = grass;
   ctx.fillRect(0, HORIZON_Y + 6, CANVAS_W, CANVAS_H - HORIZON_Y);
 
-  drawRoad(ctx, camX, time);
-  drawRoadside(ctx, camX, time);
+  drawRoad(ctx, camX, time, scene);
+  if (scene === "night") drawCrossAlley(ctx, camX, time);
+  drawRoadside(ctx, camX, time, scene);
+  if (scene === "night") drawLamps(ctx, camX, time);
 
   ctx.restore();
 }
 
-function drawSky(ctx: CanvasRenderingContext2D, camX: number): void {
+function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: "day" | "night" = "day"): void {
   const sky = getSprite("sky");
   const horizon = HORIZON_Y + 52;
   if (sky) {
@@ -88,15 +99,28 @@ function drawSky(ctx: CanvasRenderingContext2D, camX: number): void {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, CANVAS_W, horizon + 20);
   }
+  if (scene === "night") {
+    ctx.fillStyle = "rgba(18, 24, 48, 0.55)";
+    ctx.fillRect(0, 0, CANVAS_W, horizon + 24);
+    // 几颗小星星
+    ctx.fillStyle = "rgba(255,245,210,0.8)";
+    for (let i = 0; i < 14; i++) {
+      const sx = (i * 97 + 40) % CANVAS_W;
+      const sy = 24 + (i * 37) % 220;
+      ctx.beginPath();
+      ctx.arc(sx, sy, i % 3 === 0 ? 2.1 : 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
-function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number): void {
+function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: "day" | "night" = "day"): void {
   const far = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const farR = pr(ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const near = pr(-ROAD_HALF, 0, 8.5, camX);
   const nearR = pr(ROAD_HALF, 0, 8.5, camX);
 
-  ctx.fillStyle = "#8E9198";
+  ctx.fillStyle = scene === "night" ? "#4A5160" : "#8E9198";
   ctx.beginPath();
   ctx.moveTo(far.sx, far.sy);
   ctx.lineTo(farR.sx, farR.sy);
@@ -106,7 +130,7 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number): vo
   ctx.fill();
 
   // 路边石
-  ctx.fillStyle = "#D9CDB6";
+  ctx.fillStyle = scene === "night" ? "#8A8070" : "#D9CDB6";
   const curbL0 = pr(-ROAD_HALF - 0.45, 0, SPAWN_Z + 10, camX);
   const curbL1 = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const curbL2 = pr(-ROAD_HALF, 0, 8.5, camX);
@@ -131,7 +155,7 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number): vo
   ctx.fill();
 
   // 中线虚线随道路向前滚（速度沿用 BASE_SPEED，只改外观）
-  drawDashLine(ctx, 0, camX, "#F3EEDC", 7, time);
+  drawDashLine(ctx, 0, camX, scene === "night" ? "#D6C98A" : "#F3EEDC", 7, time);
 }
 
 function wrapZ(base: number, time: number, minZ: number, maxZ: number): number {
@@ -163,7 +187,62 @@ function drawDashLine(
   }
 }
 
-function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number): void {
+function drawCrossAlley(ctx: CanvasRenderingContext2D, camX: number, time: number): void {
+  const z = wrapZ(38, time * 0.15, 22, 52);
+  const half = ROAD_HALF + 7.5;
+  const near = pr(-half, 0, z - 2.2, camX);
+  const far = pr(-half, 0, z + 2.2, camX);
+  const nearR = pr(half, 0, z - 2.2, camX);
+  const farR = pr(half, 0, z + 2.2, camX);
+  ctx.fillStyle = "#3E4552";
+  ctx.beginPath();
+  ctx.moveTo(far.sx, far.sy);
+  ctx.lineTo(farR.sx, farR.sy);
+  ctx.lineTo(nearR.sx, nearR.sy);
+  ctx.lineTo(near.sx, near.sy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(214,201,138,0.55)";
+  const a = pr(-1.1, 0.02, z - 1.5, camX);
+  const b = pr(-1.1, 0.02, z + 1.5, camX);
+  const c = pr(1.1, 0.02, z + 1.5, camX);
+  const d = pr(1.1, 0.02, z - 1.5, camX);
+  ctx.beginPath();
+  ctx.moveTo(a.sx, a.sy);
+  ctx.lineTo(b.sx, b.sy);
+  ctx.lineTo(c.sx, c.sy);
+  ctx.lineTo(d.sx, d.sy);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawLamps(ctx: CanvasRenderingContext2D, camX: number, time: number): void {
+  const zs = [16, 26, 36, 46, 56, 68];
+  for (let i = 0; i < zs.length; i++) {
+    const z = wrapZ(zs[i], time, 12, 80);
+    for (const side of [-1, 1] as const) {
+      const x = side * (ROAD_HALF + 1.15);
+      const q = pr(x, 0, z, camX);
+      const k = q.scale;
+      if (k < 0.08) continue;
+      ctx.save();
+      ctx.translate(q.sx, q.sy);
+      ctx.fillStyle = "#2A2E38";
+      ctx.fillRect(-1.6 * k, -70 * k, 3.2 * k, 70 * k);
+      ctx.fillStyle = "rgba(255, 210, 120, 0.18)";
+      ctx.beginPath();
+      ctx.ellipse(0, -72 * k, 28 * k, 16 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#FFE6A0";
+      ctx.beginPath();
+      ctx.arc(0, -72 * k, 5 * k, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: "day" | "night" = "day"): void {
   type Prop = { kind: "tree" | "house"; side: -1 | 1; z: number; variant: number };
   const props: Prop[] = [];
   for (let i = 0; i < TREE_ZS.length; i++) {
@@ -324,59 +403,96 @@ function clayBody(
   }
 }
 
+function drawEnemyLabel(ctx: CanvasRenderingContext2D, text: string, k: number, y: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.max(11, 15 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 0, y);
+}
+
 function drawSpecialEnemy(ctx: CanvasRenderingContext2D, e: Enemy, k: number, flash: number): void {
   if (e.type === "shield") {
-    clayBody(ctx, k, flash, "#8FB88A", 24, 50, 16, 58);
-    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#D7B07A";
-    roundRect(ctx, -22 * k, -54 * k, 28 * k, 42 * k, 10 * k);
+    clayBody(ctx, k, flash, "#6A7B8A", 26, 52, 16, 60);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#C9D4E6";
+    roundRect(ctx, -28 * k, -62 * k, 34 * k, 54 * k, 8 * k);
     ctx.fill();
-    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#E8C992";
-    ctx.beginPath();
-    ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(110,70,30,0.35)";
-    ctx.lineWidth = Math.max(1.5, 2.5 * k);
-    ctx.beginPath();
-    ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(50,70,100,0.55)";
+    ctx.lineWidth = Math.max(2, 3.2 * k);
+    roundRect(ctx, -28 * k, -62 * k, 34 * k, 54 * k, 8 * k);
     ctx.stroke();
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FA4C8";
+    ctx.beginPath();
+    ctx.arc(-10 * k, -38 * k, 9 * k, 0, Math.PI * 2);
+    ctx.fill();
+    drawEnemyLabel(ctx, "盾", k, -78 * k, "#2C3A52");
     return;
   }
   if (e.type === "bomber") {
-    clayBody(ctx, k, flash, "#E39A3A", 26, 48, 15, 54);
-    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A4638";
+    clayBody(ctx, k, flash, "#D46A28", 28, 50, 15, 54);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A3A28";
     ctx.beginPath();
-    ctx.arc(0, -22 * k, 12 * k, 0, Math.PI * 2);
+    ctx.arc(0, -20 * k, 15 * k, 0, Math.PI * 2);
+    ctx.fill();
+    const pulse = 0.6 + Math.sin(e.age * 10) * 0.4;
+    ctx.fillStyle = `rgba(255, 80, 40, ${0.35 + pulse * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(0, -20 * k, 18 * k, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#C9A15A";
-    ctx.fillRect(-2 * k, -38 * k, 4 * k, 8 * k);
-    ctx.fillStyle = "#FFE27A";
+    ctx.fillRect(-2.4 * k, -40 * k, 4.8 * k, 10 * k);
+    ctx.fillStyle = pulse > 0.7 ? "#FFF3A0" : "#FF6A2A";
     ctx.beginPath();
-    ctx.arc(0, -40 * k, 3.2 * k, 0, Math.PI * 2);
+    ctx.arc(0, -44 * k, 4 * k, 0, Math.PI * 2);
     ctx.fill();
+    drawEnemyLabel(ctx, "爆", k, -78 * k, "#7A2A10");
     return;
   }
   if (e.type === "splitter" || e.type === "splitling") {
     const chubby = e.type === "splitling" ? 0.85 : 1;
-    clayBody(ctx, k * chubby, flash, "#9FCF96", 26, 46, 14, 54);
+    clayBody(ctx, k * chubby, flash, "#7ECFC0", 26, 46, 14, 54);
+    ctx.strokeStyle = "#2A5A52";
+    ctx.lineWidth = Math.max(1.6, 2.6 * k);
+    ctx.beginPath();
+    ctx.moveTo(0, -8 * k);
+    ctx.lineTo(-4 * k, -58 * k);
+    ctx.stroke();
     if (e.type === "splitter") {
-      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FBF88";
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5BB8A8";
       ctx.beginPath();
-      ctx.arc(16 * k, -50 * k, 11 * k, 0, Math.PI * 2);
+      ctx.arc(18 * k, -52 * k, 13 * k, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.25)";
       ctx.beginPath();
-      ctx.ellipse(13 * k, -53 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+      ctx.arc(-14 * k, -56 * k, 11 * k, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.beginPath();
+      ctx.ellipse(15 * k, -56 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      drawEnemyLabel(ctx, "裂", k, -80 * k, "#1F4A44");
     }
     return;
   }
   if (e.type === "jumper") {
-    clayBody(ctx, k, flash, "#7BA24A", 16, 44, 13, 58);
-    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#6A9140";
-    roundRect(ctx, -11 * k, -22 * k, 8 * k, 22 * k, 4 * k);
-    ctx.fill();
-    roundRect(ctx, 3 * k, -22 * k, 8 * k, 22 * k, 4 * k);
-    ctx.fill();
+    if (e.airborne) {
+      ctx.fillStyle = "rgba(40,50,30,0.2)";
+      drawEllipse(ctx, 0, 8 * k, 20 * k, 6 * k);
+      ctx.fill();
+    }
+    clayBody(ctx, k, flash, "#C6E14A", 16, 40, 13, 62);
+    ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FB030";
+    // 弹簧腿
+    ctx.fillRect(-10 * k, -22 * k, 6 * k, 24 * k);
+    ctx.fillRect(4 * k, -22 * k, 6 * k, 24 * k);
+    ctx.strokeStyle = "#5A7A18";
+    ctx.lineWidth = Math.max(1.4, 2 * k);
+    for (const side of [-7, 7]) {
+      ctx.beginPath();
+      ctx.moveTo(side * k, -20 * k);
+      for (let i = 1; i <= 4; i++) ctx.lineTo((side + (i % 2 === 0 ? 3 : -3)) * k, (-20 + i * 5) * k);
+      ctx.stroke();
+    }
+    drawEnemyLabel(ctx, "跳", k, -84 * k, "#3E5A10");
     return;
   }
   fallbackEnemy(ctx, k, false, flash);
@@ -393,12 +509,12 @@ function fallbackEnemy(ctx: CanvasRenderingContext2D, k: number, sprint: boolean
 
 export function drawLaneWarning(
   ctx: CanvasRenderingContext2D,
-  lane: "left" | "right",
+  lane: "left" | "right" | "mid",
   camX: number,
   timeLeft: number,
-  kind: "warn" | "rush" = "warn",
+  kind: "warn" | "rush" | "alley" = "warn",
 ): void {
-  const x = lane === "left" ? -LANE_X : LANE_X;
+  const x = lane === "mid" ? 0 : lane === "left" ? -LANE_X : LANE_X;
   const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
   const farR = pr(x + 2.4, 0, SPAWN_Z - 4, camX);
   const nearL = pr(x - 2.4, 0, 10, camX);
@@ -408,7 +524,9 @@ export function drawLaneWarning(
   ctx.save();
   ctx.fillStyle = kind === "rush"
     ? `rgba(210, 128, 32, ${alpha})`
-    : `rgba(210, 48, 40, ${alpha})`;
+    : kind === "alley"
+      ? `rgba(120, 80, 200, ${alpha})`
+      : `rgba(210, 48, 40, ${alpha})`;
   ctx.beginPath();
   ctx.moveTo(farL.sx, farL.sy);
   ctx.lineTo(farR.sx, farR.sy);
@@ -446,12 +564,15 @@ export function drawProp(ctx: CanvasRenderingContext2D, p: { kind: string; x: nu
     ctx.beginPath();
     ctx.arc(0, -38 * k, 8 * k, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#5A3E22";
-    ctx.font = `bold ${Math.max(10, 16 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    ctx.fillStyle = "#2E6A28";
+    ctx.font = `bold ${Math.max(12, 18 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("人质", 0, -80 * k);
-    drawPropHp(ctx, p, 32 * k, k);
+    ctx.fillText(CAGE_LABEL, 0, -86 * k);
+    ctx.font = `bold ${Math.max(9, 13 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    ctx.fillStyle = "#5A3E22";
+    ctx.fillText(Math.max(0, Math.ceil(p.hp)) + "/" + Math.ceil(p.maxHp), 0, -70 * k);
+    drawPropHp(ctx, p, 36 * k, k);
   } else {
     ctx.fillStyle = "#D9853A";
     roundRect(ctx, -18 * k, -58 * k, 36 * k, 58 * k, 10 * k);
@@ -478,8 +599,8 @@ function drawPropHp(
   y: number,
   k: number,
 ): void {
-  const w = 36 * k;
-  const h = 5 * k;
+  const w = 44 * k;
+  const h = 7 * k;
   ctx.fillStyle = "rgba(40,30,20,0.35)";
   roundRect(ctx, -w / 2, -y, w, h, 2 * k);
   ctx.fill();
@@ -496,14 +617,14 @@ export function drawSoldier(
   scale: number,
   bob: number,
   flash: number,
-  weapon: "pistol" | "smg",
+  weapon: WeaponId,
 ): void {
   const k = scale;
   const bounce = Math.sin(bob) * 2.6 * k;
   const frame = Math.sin(bob) >= 0 ? 0 : 1;
-  const id: SpriteId = weapon === "smg"
-    ? (frame === 0 ? "soldier_smg_0" : "soldier_smg_1")
-    : (frame === 0 ? "soldier_pistol_0" : "soldier_pistol_1");
+  const id: SpriteId = weapon === "pistol"
+    ? (frame === 0 ? "soldier_pistol_0" : "soldier_pistol_1")
+    : (frame === 0 ? "soldier_smg_0" : "soldier_smg_1");
 
   ctx.save();
   ctx.translate(sx, sy + bounce);
@@ -522,12 +643,12 @@ export function drawSoldier(
   }
 
   // 圆润火光：按跑动节奏闪，冲锋枪更密
-  const rate = weapon === "smg" ? 7.2 : 3.4;
+  const rate = weapon === "smg" ? 7.2 : weapon === "heavy" ? 2.4 : 3.4;
   if (Math.sin(bob * rate) > 0.55) {
     const mz = muzzleOf(id);
     const mx = (mz[0] - 0.5) * size.w;
     const my = -h + mz[1] * h;
-    drawMuzzleFlash(ctx, mx, my, k * (weapon === "smg" ? 1.15 : 1));
+    drawMuzzleFlash(ctx, mx, my, k * (weapon === "heavy" ? 1.45 : weapon === "smg" ? 1.15 : 1));
   }
   ctx.restore();
 }
@@ -584,31 +705,41 @@ export function drawSquad(ctx: CanvasRenderingContext2D, squad: Squad, camX: num
     const sb = squad.slotOf(b.slot);
     return sa.z - sb.z;
   });
-  const weapon = squad.weapon === "smg" ? "smg" : "pistol";
+  const weapon: WeaponId = squad.weapon;
   const vis = squadVisualScale(squad.count);
   for (const s of members) {
     const slot = squad.slotOf(s.slot);
     const p = pr(squad.x + slot.x, 0, squad.z + slot.z, camX);
     drawSoldier(ctx, p.sx, p.sy, p.scale * vis, s.bob, s.flash, weapon);
+    if (squad.shielded) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(90, 170, 230, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy - 28 * p.scale * vis, 22 * p.scale * vis, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 }
 
 export function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet, camX: number): void {
   const p = pr(b.x, b.y, b.z, camX);
   const boosted = b.amplified;
-  const k = p.scale * (boosted ? 1.35 : 1);
+  const heavy = b.heavy;
+  const k = p.scale * (heavy ? 1.7 : boosted ? 1.35 : 1);
   ctx.save();
   ctx.translate(p.sx, p.sy);
-  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10 * k);
-  glow.addColorStop(0, boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, (heavy ? 14 : 10) * k);
+  glow.addColorStop(0, heavy ? "rgba(255,140,70,0.95)" : boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
   glow.addColorStop(1, "rgba(255,220,80,0)");
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(0, 0, 10 * k, 0, Math.PI * 2);
+  ctx.arc(0, 0, (heavy ? 13 : 10) * k, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = boosted ? "#FFD24A" : "#F7E08A";
+  ctx.fillStyle = heavy ? "#FF8A3A" : boosted ? "#FFD24A" : "#F7E08A";
   ctx.beginPath();
-  ctx.ellipse(0, 0, 3.2 * k, 8 * k, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, (heavy ? 5.2 : 3.2) * k, (heavy ? 11 : 8) * k, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#FFF8D2";
   ctx.beginPath();
@@ -638,14 +769,17 @@ export function drawParticle(ctx: CanvasRenderingContext2D, p: Particle, camX: n
 
 export interface HudInfo {
   count: number;
-  weapon: "pistol" | "smg";
+  weapon: WeaponId;
   weaponTime: number;
   remain: number;
   fireBonus: number;
   muted: boolean;
   hint: boolean;
+  kills?: number;
+  shieldTime?: number;
   warning?: { lane: "left" | "right"; timeLeft: number } | null;
   rush?: { timeLeft: number; spawned: boolean } | null;
+  banner?: string | null;
 }
 
 export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
@@ -674,11 +808,12 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
 
   // 中：武器药丸（冲锋枪只显示剩余秒数，不画弹药格）
   const wname = WEAPONS[hud.weapon].name;
-  const extra = hud.weapon === "smg" ? "  " + Math.ceil(Math.max(0, hud.weaponTime)) + "s" : "";
+  const extra = hud.weapon !== "pistol" ? "  " + Math.ceil(Math.max(0, hud.weaponTime)) + "s" : "";
   const midW = 230;
   const midX = (CANVAS_W - midW) / 2;
-  pill(ctx, midX, 48, midW, 60, hud.weapon === "smg" ? "rgba(255,236,190,0.96)" : "rgba(255,248,230,0.94)");
-  const iconId: SpriteId = hud.weapon === "smg" ? "icon_smg" : "icon_pistol";
+  const wcolor = hud.weapon === "heavy" ? "rgba(255,214,170,0.96)" : hud.weapon === "smg" ? "rgba(255,236,190,0.96)" : "rgba(255,248,230,0.94)";
+  pill(ctx, midX, 48, midW, 60, wcolor);
+  const iconId: SpriteId = hud.weapon === "pistol" ? "icon_pistol" : "icon_smg";
   drawSprite(ctx, iconId, midX + 36, 108, 36);
   ctx.fillStyle = "#5A3E22";
   ctx.font = 'bold 24px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
@@ -695,12 +830,26 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
   ctx.textBaseline = "middle";
   ctx.fillText(formatTime(hud.remain), CANVAS_W - 112, 79);
 
+  pill(ctx, CANVAS_W - 206, 118, 172, 36, "rgba(255,248,230,0.94)");
+  ctx.fillStyle = "#5A3E22";
+  ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText("击杀 " + (hud.kills ?? 0), CANVAS_W - 120, 137);
+
   if (hud.fireBonus > 0) {
     pill(ctx, 36, 122, 200, 36, "rgba(86,160,90,0.94)");
     ctx.fillStyle = "#FFFFFF";
     ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
     ctx.textAlign = "left";
     ctx.fillText("射速提升 " + hud.fireBonus.toFixed(1) + "s", 52, 141);
+  }
+  if (hud.shieldTime && hud.shieldTime > 0) {
+    const y = hud.fireBonus > 0 ? 164 : 122;
+    pill(ctx, 36, y, 200, 36, "rgba(70,140,200,0.94)");
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = "left";
+    ctx.fillText("护盾 " + hud.shieldTime.toFixed(1) + "s", 52, y + 19);
   }
 
   drawMute(ctx, hud.muted);
@@ -714,22 +863,18 @@ export function drawHud(ctx: CanvasRenderingContext2D, hud: HudInfo): void {
     ctx.fillText("左右滑动 · 自动开火 · 穿蓝门加人", CANVAS_W / 2, CANVAS_H - 172);
   }
 
-  if (hud.warning) {
-    const pulse = 0.72 + Math.sin(hud.warning.timeLeft * 18) * 0.18;
-    pill(ctx, 150, 150, CANVAS_W - 300, 84, `rgba(180,36,32,${pulse})`);
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = 'bold 44px "PingFang SC","Microsoft YaHei",sans-serif';
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("躲开！", CANVAS_W / 2, 194);
-  } else if (hud.rush) {
-    const pulse = 0.72 + Math.sin((hud.rush.timeLeft + 0.3) * 16) * 0.16;
-    pill(ctx, 130, 150, CANVAS_W - 260, 84, `rgba(196,110,24,${pulse})`);
+  const banner = hud.banner || (hud.warning ? (hud.warning.lane === "left" ? "躲开左道！" : "躲开右道！") : hud.rush ? "左道来袭！" : null);
+  if (banner) {
+    const warn = banner.startsWith("躲开");
+    const rush = banner.includes("来袭") || banner.includes("夹击");
+    const pulse = 0.72 + Math.sin((hud.warning?.timeLeft ?? hud.rush?.timeLeft ?? 0.4) * 18) * 0.16;
+    const color = warn ? `rgba(180,36,32,${pulse})` : rush ? `rgba(196,110,24,${pulse})` : banner.includes("×2") ? `rgba(196,150,24,${pulse})` : `rgba(70,80,150,${pulse})`;
+    pill(ctx, 90, 164, CANVAS_W - 180, 84, color);
     ctx.fillStyle = "#FFFFFF";
     ctx.font = 'bold 40px "PingFang SC","Microsoft YaHei",sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("左道来袭！", CANVAS_W / 2, 194);
+    ctx.fillText(banner, CANVAS_W / 2, 208);
   }
 }
 

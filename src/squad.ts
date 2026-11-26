@@ -1,9 +1,12 @@
 import {
+  CAP_EXPIRE_SHIELD,
   HIT_IFRAMES,
   LANE_X,
   MAX_SQUAD,
   OVERFLOW_BONUS_DURATION,
   OVERFLOW_BONUS_MUL,
+  OVERFLOW_SHIELD_DURATION,
+  SHIELD_DAMAGE_MUL,
   TEAM_Z,
   WEAPONS,
   type WeaponId,
@@ -62,6 +65,7 @@ export class Squad {
   weaponTime = 0;
   iframes = 0;
   fireBonus = 0;
+  shieldTime = 0;
   fireCd = 0;
   readonly pool = new Pool<Soldier>(MAX_SQUAD, () => ({
     alive: false,
@@ -79,6 +83,7 @@ export class Squad {
     this.weaponTime = 0;
     this.iframes = 0;
     this.fireBonus = 0;
+    this.shieldTime = 0;
     this.fireCd = 0;
     this.pool.clear();
     this.syncMembers();
@@ -108,7 +113,10 @@ export class Squad {
     const overflow = Math.max(0, next - MAX_SQUAD);
     const applied = Math.min(MAX_SQUAD, Math.max(0, next));
     this.setCount(applied);
-    if (overflow > 0) this.fireBonus = OVERFLOW_BONUS_DURATION;
+    if (overflow > 0) {
+      this.fireBonus = OVERFLOW_BONUS_DURATION;
+      this.shieldTime = Math.max(this.shieldTime, OVERFLOW_SHIELD_DURATION);
+    }
     return { applied, overflow };
   }
 
@@ -120,8 +128,18 @@ export class Squad {
     return this.grow(this.count * n);
   }
 
+  get shielded(): boolean {
+    return this.shieldTime > 0;
+  }
+
+  grantShield(duration: number): void {
+    this.shieldTime = Math.max(this.shieldTime, duration);
+  }
+
   lose(n: number): void {
-    this.setCount(Math.max(0, this.count - n));
+    let lost = n;
+    if (this.shielded) lost = Math.max(1, Math.ceil(n * SHIELD_DAMAGE_MUL));
+    this.setCount(Math.max(0, this.count - lost));
     this.iframes = HIT_IFRAMES;
     for (const s of this.pool.active) s.flash = 0.22;
   }
@@ -135,9 +153,11 @@ export class Squad {
     this.x = expDamp(this.x, clamp(targetX, -LANE_X, LANE_X), 10, dt);
     if (this.iframes > 0) this.iframes = Math.max(0, this.iframes - dt);
     if (this.fireBonus > 0) this.fireBonus = Math.max(0, this.fireBonus - dt);
+    if (this.shieldTime > 0) this.shieldTime = Math.max(0, this.shieldTime - dt);
     if (this.weapon !== "pistol") {
       this.weaponTime -= dt;
       if (this.weaponTime <= 0) {
+        if (this.count >= MAX_SQUAD) this.grantShield(CAP_EXPIRE_SHIELD);
         this.weapon = "pistol";
         this.weaponTime = 0;
       }

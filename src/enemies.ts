@@ -27,6 +27,7 @@ export interface Enemy {
   jumpT: number;
   airT: number;
   isChild: boolean;
+  driftX: number | null;
 }
 
 function resetE(e: Enemy): void {
@@ -35,6 +36,7 @@ function resetE(e: Enemy): void {
   e.airborne = false;
   e.isChild = false;
   e.y = 0;
+  e.driftX = null;
 }
 
 export class Enemies {
@@ -56,6 +58,7 @@ export class Enemies {
     jumpT: 0,
     airT: 0,
     isChild: false,
+    driftX: null,
   }), resetE);
 
   clear(): void {
@@ -64,8 +67,8 @@ export class Enemies {
 
   spawn(
     type: EnemyId,
-    lane: "left" | "right",
-    opts?: { x?: number; z?: number; hpMul?: number; isChild?: boolean },
+    lane: "left" | "right" | "mid",
+    opts?: { x?: number; z?: number; hpMul?: number; isChild?: boolean; driftX?: number },
   ): Enemy | null {
     const e = this.pool.acquire();
     if (!e) return null;
@@ -75,7 +78,8 @@ export class Enemies {
     e.type = type;
     // 同一车道错开一点横向位置，连出时看起来是一群而不是单列重叠
     const slot = this.pool.size % 3;
-    e.x = opts?.x ?? (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
+    const base = lane === "left" ? -LANE_X : lane === "mid" ? 0 : LANE_X;
+    e.x = opts?.x ?? base + (slot - 1) * 0.62;
     e.y = 0;
     e.z = opts?.z ?? SPAWN_Z;
     e.hp = def.hp * mul;
@@ -90,6 +94,7 @@ export class Enemies {
     e.airT = 0;
     e.jumpT = type === "jumper" ? 0.35 + (slot * 0.4) : 0;
     e.isChild = !!opts?.isChild;
+    e.driftX = opts?.driftX ?? null;
     return e;
   }
 
@@ -100,6 +105,10 @@ export class Enemies {
       const def = ENEMY[e.type];
       e.age += dt;
       e.walk += dt * def.speed * 6;
+      if (e.driftX != null) {
+        const k = 1 - Math.exp(-1.15 * dt);
+        e.x += (e.driftX - e.x) * k;
+      }
       if (e.hitFlash > 0) e.hitFlash = Math.max(0, e.hitFlash - dt);
       let mul = 1;
       if (e.type === "sprinter") {
@@ -146,8 +155,10 @@ export class Enemies {
   }
 
   /** 造成伤害。盾兵承伤减半。生命降至 0 返回 true。 */
-  hurt(e: Enemy, dmg: number): boolean {
-    const takenMul = "damageTakenMul" in ENEMY[e.type] ? (ENEMY[e.type] as { damageTakenMul?: number }).damageTakenMul ?? 1 : 1;
+  hurt(e: Enemy, dmg: number, opts?: { pierce?: boolean }): boolean {
+    const takenMul = opts?.pierce
+      ? 1
+      : ("damageTakenMul" in ENEMY[e.type] ? (ENEMY[e.type] as { damageTakenMul?: number }).damageTakenMul ?? 1 : 1);
     e.hp -= dmg * takenMul;
     e.hitFlash = 0.08;
     if (e.hp <= 0) {

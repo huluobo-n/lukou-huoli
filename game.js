@@ -34,6 +34,13 @@
       damage: 0.7,
       rate: 12,
       duration: 15
+    },
+    heavy: {
+      id: "heavy",
+      name: "\u91CD\u51FB",
+      damage: 3.4,
+      rate: 2.4,
+      duration: 15
     }
   };
   var ENEMY = {
@@ -119,15 +126,19 @@
   var GOLD_NEAR_MUL = 0.5;
   var HP_SCALE_START = 10;
   var HP_SCALE_PER_SEC = 0.02;
+  var HP_SCALE_LATE_START = 60;
+  var HP_SCALE_LATE_PER_SEC = 0.012;
   function enemyHpMul(t) {
     if (t <= HP_SCALE_START) return 1;
-    return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+    let mul = 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+    if (t > HP_SCALE_LATE_START) mul += (t - HP_SCALE_LATE_START) * HP_SCALE_LATE_PER_SEC;
+    return mul;
   }
   var WARNING_FIRST = 28;
   var WARNING_TELEGRAPH = 1.2;
   var WARNING_DAMAGE = 7;
   function warningPeriod(t) {
-    return Math.max(8, 13.5 - Math.max(0, t - WARNING_FIRST) * 0.06);
+    return Math.max(7, 13 - Math.max(0, t - WARNING_FIRST) * 0.07);
   }
   var RUSH_FIRST = 36;
   var RUSH_TELEGRAPH = 1.2;
@@ -141,8 +152,47 @@
     if (t >= 60) return ["jumper", "walker", "sprinter"];
     return ["walker", "walker", "sprinter"];
   }
+  var OVERFLOW_SHIELD_DURATION = 3.5;
+  var SHIELD_DAMAGE_MUL = 0.5;
+  var SHIELD_GATE_DURATION = 4;
+  var CAP_EXPIRE_SHIELD = 2.5;
+  var SCENE_SHIFT_AT = 60;
+  var GOLD_GATE_LIFE = 16;
+  var GOLD_WINDOW_LIFE = 10;
+  var GOLD_WINDOW_LULL = 2.4;
+  var GOLD_WINDOW_Z = 32;
+  var GOLD_WINDOW_BASE = [56, 84, 114];
+  var RUSH_QUIET = 5.2;
+  var PINCER_FIRST = 52;
+  var PINCER_TELEGRAPH = 1.25;
+  var PINCER_BANNER = 2.6;
+  var PINCER_PERIOD = 22;
+  var ALLEY_FIRST = 68;
+  var ALLEY_TELEGRAPH = 1.3;
+  var ALLEY_BANNER = 2.6;
+  var ALLEY_PERIOD = 24;
+  var ALLEY_SPAWN_Z = 40;
+  var MERCY_AT = 10.2;
+  var MERCY_MAX_COUNT = 2;
+  var MERCY_Z = 22;
+  function seedOffset(seed, key, span) {
+    const x = Math.imul(seed ^ key * 2654435769, 2246822507) >>> 0;
+    return (x / 4294967295 - 0.5) * 2 * span;
+  }
+  function goldWindowTime(index, seed) {
+    var _a;
+    const base = (_a = GOLD_WINDOW_BASE[index]) != null ? _a : GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 30;
+    return base + seedOffset(seed, 17 + index, 2.2);
+  }
+  function pincerTime(index, seed) {
+    return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, 2);
+  }
+  function alleyTime(index, seed) {
+    return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 2.4);
+  }
   var CAGE_HP = 8;
   var CAGE_REWARD = 3;
+  var CAGE_LABEL = "\u6551\u51FA";
   var BARREL_HP = 3;
   var BARREL_AOE_RADIUS = 3.4;
   var BARREL_AOE_DAMAGE = 8;
@@ -161,7 +211,7 @@
     // —— 40–70 秒：约 40 秒后出现成对红门 -3 / 蓝门 +3 ——
     { time: 40.5, kind: "gate", lane: "right", gate: "red", value: 3, label: "-3" },
     { time: 40.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-    { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
+    { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "heavy", label: "\u91CD\u51FB" },
     { time: 51, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 58, kind: "gate", lane: "left", gate: "red", value: 3, label: "-3" },
     { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
@@ -220,12 +270,17 @@
   var ENDLESS_GATE_CYCLE = [
     { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
     { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" },
+    { time: 0, kind: "gate", lane: "left", gate: "shield", label: "\u62A4\u76FE" },
     { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-    { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-    { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "\u51B2\u950B\u67AA" }
+    { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "heavy", label: "\u91CD\u51FB" },
+    { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" }
   ];
+  function endlessGateFor(index, seed) {
+    const i = (index + (seed >>> 0) % ENDLESS_GATE_CYCLE.length) % ENDLESS_GATE_CYCLE.length;
+    return ENDLESS_GATE_CYCLE[i];
+  }
   function endlessHordeInterval(t) {
-    return Math.max(0.16, 0.26 - Math.max(0, t - 70) * 18e-4);
+    return Math.max(0.14, 0.24 - Math.max(0, t - 70) * 2e-3);
   }
   var ENDLESS_MIX = [
     "walker",
@@ -755,6 +810,7 @@
   function resetB(b) {
     b.alive = false;
     b.amplified = false;
+    b.heavy = false;
   }
   var Bullets = class {
     constructor() {
@@ -765,13 +821,14 @@
         z: TEAM_Z,
         pz: TEAM_Z,
         damage: 1,
-        amplified: false
+        amplified: false,
+        heavy: false
       }), resetB);
     }
     clear() {
       this.pool.clear();
     }
-    spawn(x, z, damage) {
+    spawn(x, z, damage, opts) {
       const b = this.pool.acquire();
       if (!b) return null;
       b.alive = true;
@@ -781,6 +838,7 @@
       b.pz = b.z;
       b.damage = damage;
       b.amplified = false;
+      b.heavy = !!(opts == null ? void 0 : opts.heavy);
       return b;
     }
     update(dt) {
@@ -801,6 +859,7 @@
     e.airborne = false;
     e.isChild = false;
     e.y = 0;
+    e.driftX = null;
   }
   var Enemies = class {
     constructor() {
@@ -821,14 +880,15 @@
         airborne: false,
         jumpT: 0,
         airT: 0,
-        isChild: false
+        isChild: false,
+        driftX: null
       }), resetE);
     }
     clear() {
       this.pool.clear();
     }
     spawn(type, lane, opts) {
-      var _a, _b, _c;
+      var _a, _b, _c, _d;
       const e = this.pool.acquire();
       if (!e) return null;
       const def = ENEMY[type];
@@ -836,7 +896,8 @@
       e.alive = true;
       e.type = type;
       const slot = this.pool.size % 3;
-      e.x = (_b = opts == null ? void 0 : opts.x) != null ? _b : (lane === "left" ? -LANE_X : LANE_X) + (slot - 1) * 0.62;
+      const base = lane === "left" ? -LANE_X : lane === "mid" ? 0 : LANE_X;
+      e.x = (_b = opts == null ? void 0 : opts.x) != null ? _b : base + (slot - 1) * 0.62;
       e.y = 0;
       e.z = (_c = opts == null ? void 0 : opts.z) != null ? _c : SPAWN_Z;
       e.hp = def.hp * mul;
@@ -851,6 +912,7 @@
       e.airT = 0;
       e.jumpT = type === "jumper" ? 0.35 + slot * 0.4 : 0;
       e.isChild = !!(opts == null ? void 0 : opts.isChild);
+      e.driftX = (_d = opts == null ? void 0 : opts.driftX) != null ? _d : null;
       return e;
     }
     update(dt) {
@@ -860,6 +922,10 @@
         const def = ENEMY[e.type];
         e.age += dt;
         e.walk += dt * def.speed * 6;
+        if (e.driftX != null) {
+          const k = 1 - Math.exp(-1.15 * dt);
+          e.x += (e.driftX - e.x) * k;
+        }
         if (e.hitFlash > 0) e.hitFlash = Math.max(0, e.hitFlash - dt);
         let mul = 1;
         if (e.type === "sprinter") {
@@ -904,9 +970,9 @@
       }
     }
     /** 造成伤害。盾兵承伤减半。生命降至 0 返回 true。 */
-    hurt(e, dmg) {
+    hurt(e, dmg, opts) {
       var _a;
-      const takenMul = "damageTakenMul" in ENEMY[e.type] ? (_a = ENEMY[e.type].damageTakenMul) != null ? _a : 1 : 1;
+      const takenMul = (opts == null ? void 0 : opts.pierce) ? 1 : "damageTakenMul" in ENEMY[e.type] ? (_a = ENEMY[e.type].damageTakenMul) != null ? _a : 1 : 1;
       e.hp -= dmg * takenMul;
       e.hitFlash = 0.08;
       if (e.hp <= 0) {
@@ -1273,21 +1339,29 @@
   }
   var TREE_ZS = [15, 20, 25, 31, 37, 44, 51, 58, 66, 74, 83];
   var HOUSE_ZS = [17, 26, 35, 44, 53, 62, 71, 81];
-  function drawWorld(ctx, camX, time, shakeX, shakeY) {
+  function drawWorld(ctx, camX, time, shakeX, shakeY, scene = "day") {
     ctx.save();
     ctx.translate(shakeX, shakeY);
-    drawSky(ctx, camX);
+    drawSky(ctx, camX, scene);
     const grass = ctx.createLinearGradient(0, HORIZON_Y, 0, CANVAS_H);
-    grass.addColorStop(0, "#C8C49A");
-    grass.addColorStop(0.4, "#B3B880");
-    grass.addColorStop(1, "#8EA86A");
+    if (scene === "night") {
+      grass.addColorStop(0, "#3A4A5A");
+      grass.addColorStop(0.45, "#2C3C3A");
+      grass.addColorStop(1, "#24342C");
+    } else {
+      grass.addColorStop(0, "#C8C49A");
+      grass.addColorStop(0.4, "#B3B880");
+      grass.addColorStop(1, "#8EA86A");
+    }
     ctx.fillStyle = grass;
     ctx.fillRect(0, HORIZON_Y + 6, CANVAS_W, CANVAS_H - HORIZON_Y);
-    drawRoad(ctx, camX, time);
-    drawRoadside(ctx, camX, time);
+    drawRoad(ctx, camX, time, scene);
+    if (scene === "night") drawCrossAlley(ctx, camX, time);
+    drawRoadside(ctx, camX, time, scene);
+    if (scene === "night") drawLamps(ctx, camX, time);
     ctx.restore();
   }
-  function drawSky(ctx, camX) {
+  function drawSky(ctx, camX, scene = "day") {
     const sky = getSprite("sky");
     const horizon = HORIZON_Y + 52;
     if (sky) {
@@ -1308,13 +1382,25 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, CANVAS_W, horizon + 20);
     }
+    if (scene === "night") {
+      ctx.fillStyle = "rgba(18, 24, 48, 0.55)";
+      ctx.fillRect(0, 0, CANVAS_W, horizon + 24);
+      ctx.fillStyle = "rgba(255,245,210,0.8)";
+      for (let i = 0; i < 14; i++) {
+        const sx = (i * 97 + 40) % CANVAS_W;
+        const sy = 24 + i * 37 % 220;
+        ctx.beginPath();
+        ctx.arc(sx, sy, i % 3 === 0 ? 2.1 : 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
-  function drawRoad(ctx, camX, time) {
+  function drawRoad(ctx, camX, time, scene = "day") {
     const far = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
     const farR = pr(ROAD_HALF, 0, SPAWN_Z + 10, camX);
     const near = pr(-ROAD_HALF, 0, 8.5, camX);
     const nearR = pr(ROAD_HALF, 0, 8.5, camX);
-    ctx.fillStyle = "#8E9198";
+    ctx.fillStyle = scene === "night" ? "#4A5160" : "#8E9198";
     ctx.beginPath();
     ctx.moveTo(far.sx, far.sy);
     ctx.lineTo(farR.sx, farR.sy);
@@ -1322,7 +1408,7 @@
     ctx.lineTo(near.sx, near.sy);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = "#D9CDB6";
+    ctx.fillStyle = scene === "night" ? "#8A8070" : "#D9CDB6";
     const curbL0 = pr(-ROAD_HALF - 0.45, 0, SPAWN_Z + 10, camX);
     const curbL1 = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
     const curbL2 = pr(-ROAD_HALF, 0, 8.5, camX);
@@ -1345,7 +1431,7 @@
     ctx.lineTo(curbR3.sx, curbR3.sy);
     ctx.closePath();
     ctx.fill();
-    drawDashLine(ctx, 0, camX, "#F3EEDC", 7, time);
+    drawDashLine(ctx, 0, camX, scene === "night" ? "#D6C98A" : "#F3EEDC", 7, time);
   }
   function wrapZ(base, time, minZ, maxZ) {
     const span = maxZ - minZ;
@@ -1367,7 +1453,60 @@
       ctx.stroke();
     }
   }
-  function drawRoadside(ctx, camX, time) {
+  function drawCrossAlley(ctx, camX, time) {
+    const z = wrapZ(38, time * 0.15, 22, 52);
+    const half = ROAD_HALF + 7.5;
+    const near = pr(-half, 0, z - 2.2, camX);
+    const far = pr(-half, 0, z + 2.2, camX);
+    const nearR = pr(half, 0, z - 2.2, camX);
+    const farR = pr(half, 0, z + 2.2, camX);
+    ctx.fillStyle = "#3E4552";
+    ctx.beginPath();
+    ctx.moveTo(far.sx, far.sy);
+    ctx.lineTo(farR.sx, farR.sy);
+    ctx.lineTo(nearR.sx, nearR.sy);
+    ctx.lineTo(near.sx, near.sy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(214,201,138,0.55)";
+    const a = pr(-1.1, 0.02, z - 1.5, camX);
+    const b = pr(-1.1, 0.02, z + 1.5, camX);
+    const c = pr(1.1, 0.02, z + 1.5, camX);
+    const d = pr(1.1, 0.02, z - 1.5, camX);
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.lineTo(c.sx, c.sy);
+    ctx.lineTo(d.sx, d.sy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  function drawLamps(ctx, camX, time) {
+    const zs = [16, 26, 36, 46, 56, 68];
+    for (let i = 0; i < zs.length; i++) {
+      const z = wrapZ(zs[i], time, 12, 80);
+      for (const side of [-1, 1]) {
+        const x = side * (ROAD_HALF + 1.15);
+        const q = pr(x, 0, z, camX);
+        const k = q.scale;
+        if (k < 0.08) continue;
+        ctx.save();
+        ctx.translate(q.sx, q.sy);
+        ctx.fillStyle = "#2A2E38";
+        ctx.fillRect(-1.6 * k, -70 * k, 3.2 * k, 70 * k);
+        ctx.fillStyle = "rgba(255, 210, 120, 0.18)";
+        ctx.beginPath();
+        ctx.ellipse(0, -72 * k, 28 * k, 16 * k, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#FFE6A0";
+        ctx.beginPath();
+        ctx.arc(0, -72 * k, 5 * k, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+  function drawRoadside(ctx, camX, time, scene = "day") {
     const props = [];
     for (let i = 0; i < TREE_ZS.length; i++) {
       props.push({ kind: "tree", side: -1, z: wrapZ(TREE_ZS[i], time, 11, 92), variant: i % 2 });
@@ -1495,59 +1634,94 @@
       ctx.fill();
     }
   }
+  function drawEnemyLabel(ctx, text, k, y, color) {
+    ctx.fillStyle = color;
+    ctx.font = `bold ${Math.max(11, 15 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 0, y);
+  }
   function drawSpecialEnemy(ctx, e, k, flash) {
     if (e.type === "shield") {
-      clayBody(ctx, k, flash, "#8FB88A", 24, 50, 16, 58);
-      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#D7B07A";
-      roundRect(ctx, -22 * k, -54 * k, 28 * k, 42 * k, 10 * k);
+      clayBody(ctx, k, flash, "#6A7B8A", 26, 52, 16, 60);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#C9D4E6";
+      roundRect(ctx, -28 * k, -62 * k, 34 * k, 54 * k, 8 * k);
       ctx.fill();
-      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#E8C992";
-      ctx.beginPath();
-      ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(110,70,30,0.35)";
-      ctx.lineWidth = Math.max(1.5, 2.5 * k);
-      ctx.beginPath();
-      ctx.arc(-8 * k, -36 * k, 7 * k, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(50,70,100,0.55)";
+      ctx.lineWidth = Math.max(2, 3.2 * k);
+      roundRect(ctx, -28 * k, -62 * k, 34 * k, 54 * k, 8 * k);
       ctx.stroke();
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FA4C8";
+      ctx.beginPath();
+      ctx.arc(-10 * k, -38 * k, 9 * k, 0, Math.PI * 2);
+      ctx.fill();
+      drawEnemyLabel(ctx, "\u76FE", k, -78 * k, "#2C3A52");
       return;
     }
     if (e.type === "bomber") {
-      clayBody(ctx, k, flash, "#E39A3A", 26, 48, 15, 54);
-      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A4638";
+      clayBody(ctx, k, flash, "#D46A28", 28, 50, 15, 54);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5A3A28";
       ctx.beginPath();
-      ctx.arc(0, -22 * k, 12 * k, 0, Math.PI * 2);
+      ctx.arc(0, -20 * k, 15 * k, 0, Math.PI * 2);
+      ctx.fill();
+      const pulse = 0.6 + Math.sin(e.age * 10) * 0.4;
+      ctx.fillStyle = `rgba(255, 80, 40, ${0.35 + pulse * 0.35})`;
+      ctx.beginPath();
+      ctx.arc(0, -20 * k, 18 * k, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#C9A15A";
-      ctx.fillRect(-2 * k, -38 * k, 4 * k, 8 * k);
-      ctx.fillStyle = "#FFE27A";
+      ctx.fillRect(-2.4 * k, -40 * k, 4.8 * k, 10 * k);
+      ctx.fillStyle = pulse > 0.7 ? "#FFF3A0" : "#FF6A2A";
       ctx.beginPath();
-      ctx.arc(0, -40 * k, 3.2 * k, 0, Math.PI * 2);
+      ctx.arc(0, -44 * k, 4 * k, 0, Math.PI * 2);
       ctx.fill();
+      drawEnemyLabel(ctx, "\u7206", k, -78 * k, "#7A2A10");
       return;
     }
     if (e.type === "splitter" || e.type === "splitling") {
       const chubby = e.type === "splitling" ? 0.85 : 1;
-      clayBody(ctx, k * chubby, flash, "#9FCF96", 26, 46, 14, 54);
+      clayBody(ctx, k * chubby, flash, "#7ECFC0", 26, 46, 14, 54);
+      ctx.strokeStyle = "#2A5A52";
+      ctx.lineWidth = Math.max(1.6, 2.6 * k);
+      ctx.beginPath();
+      ctx.moveTo(0, -8 * k);
+      ctx.lineTo(-4 * k, -58 * k);
+      ctx.stroke();
       if (e.type === "splitter") {
-        ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FBF88";
+        ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#5BB8A8";
         ctx.beginPath();
-        ctx.arc(16 * k, -50 * k, 11 * k, 0, Math.PI * 2);
+        ctx.arc(18 * k, -52 * k, 13 * k, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = "rgba(255,255,255,0.25)";
         ctx.beginPath();
-        ctx.ellipse(13 * k, -53 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+        ctx.arc(-14 * k, -56 * k, 11 * k, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.28)";
+        ctx.beginPath();
+        ctx.ellipse(15 * k, -56 * k, 3.5 * k, 2.4 * k, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+        drawEnemyLabel(ctx, "\u88C2", k, -80 * k, "#1F4A44");
       }
       return;
     }
     if (e.type === "jumper") {
-      clayBody(ctx, k, flash, "#7BA24A", 16, 44, 13, 58);
-      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#6A9140";
-      roundRect(ctx, -11 * k, -22 * k, 8 * k, 22 * k, 4 * k);
-      ctx.fill();
-      roundRect(ctx, 3 * k, -22 * k, 8 * k, 22 * k, 4 * k);
-      ctx.fill();
+      if (e.airborne) {
+        ctx.fillStyle = "rgba(40,50,30,0.2)";
+        drawEllipse(ctx, 0, 8 * k, 20 * k, 6 * k);
+        ctx.fill();
+      }
+      clayBody(ctx, k, flash, "#C6E14A", 16, 40, 13, 62);
+      ctx.fillStyle = flash > 0 ? "#FFFFFF" : "#8FB030";
+      ctx.fillRect(-10 * k, -22 * k, 6 * k, 24 * k);
+      ctx.fillRect(4 * k, -22 * k, 6 * k, 24 * k);
+      ctx.strokeStyle = "#5A7A18";
+      ctx.lineWidth = Math.max(1.4, 2 * k);
+      for (const side of [-7, 7]) {
+        ctx.beginPath();
+        ctx.moveTo(side * k, -20 * k);
+        for (let i = 1; i <= 4; i++) ctx.lineTo((side + (i % 2 === 0 ? 3 : -3)) * k, (-20 + i * 5) * k);
+        ctx.stroke();
+      }
+      drawEnemyLabel(ctx, "\u8DF3", k, -84 * k, "#3E5A10");
       return;
     }
     fallbackEnemy(ctx, k, false, flash);
@@ -1561,7 +1735,7 @@
     ctx.fill();
   }
   function drawLaneWarning(ctx, lane, camX, timeLeft, kind = "warn") {
-    const x = lane === "left" ? -LANE_X : LANE_X;
+    const x = lane === "mid" ? 0 : lane === "left" ? -LANE_X : LANE_X;
     const farL = pr(x - 2.4, 0, SPAWN_Z - 4, camX);
     const farR = pr(x + 2.4, 0, SPAWN_Z - 4, camX);
     const nearL = pr(x - 2.4, 0, 10, camX);
@@ -1569,7 +1743,7 @@
     const pulse = 0.18 + Math.max(0, 1.2 - timeLeft) * 0.16 + Math.sin(timeLeft * 16) * 0.05;
     const alpha = Math.max(0.12, Math.min(0.42, pulse));
     ctx.save();
-    ctx.fillStyle = kind === "rush" ? `rgba(210, 128, 32, ${alpha})` : `rgba(210, 48, 40, ${alpha})`;
+    ctx.fillStyle = kind === "rush" ? `rgba(210, 128, 32, ${alpha})` : kind === "alley" ? `rgba(120, 80, 200, ${alpha})` : `rgba(210, 48, 40, ${alpha})`;
     ctx.beginPath();
     ctx.moveTo(farL.sx, farL.sy);
     ctx.lineTo(farR.sx, farR.sy);
@@ -1606,12 +1780,15 @@
       ctx.beginPath();
       ctx.arc(0, -38 * k, 8 * k, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#5A3E22";
-      ctx.font = `bold ${Math.max(10, 16 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = "#2E6A28";
+      ctx.font = `bold ${Math.max(12, 18 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("\u4EBA\u8D28", 0, -80 * k);
-      drawPropHp(ctx, p, 32 * k, k);
+      ctx.fillText(CAGE_LABEL, 0, -86 * k);
+      ctx.font = `bold ${Math.max(9, 13 * k)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = "#5A3E22";
+      ctx.fillText(Math.max(0, Math.ceil(p.hp)) + "/" + Math.ceil(p.maxHp), 0, -70 * k);
+      drawPropHp(ctx, p, 36 * k, k);
     } else {
       ctx.fillStyle = "#D9853A";
       roundRect(ctx, -18 * k, -58 * k, 36 * k, 58 * k, 10 * k);
@@ -1632,8 +1809,8 @@
     ctx.restore();
   }
   function drawPropHp(ctx, p, y, k) {
-    const w = 36 * k;
-    const h = 5 * k;
+    const w = 44 * k;
+    const h = 7 * k;
     ctx.fillStyle = "rgba(40,30,20,0.35)";
     roundRect(ctx, -w / 2, -y, w, h, 2 * k);
     ctx.fill();
@@ -1646,7 +1823,7 @@
     const k = scale;
     const bounce = Math.sin(bob) * 2.6 * k;
     const frame = Math.sin(bob) >= 0 ? 0 : 1;
-    const id = weapon === "smg" ? frame === 0 ? "soldier_smg_0" : "soldier_smg_1" : frame === 0 ? "soldier_pistol_0" : "soldier_pistol_1";
+    const id = weapon === "pistol" ? frame === 0 ? "soldier_pistol_0" : "soldier_pistol_1" : frame === 0 ? "soldier_smg_0" : "soldier_smg_1";
     ctx.save();
     ctx.translate(sx, sy + bounce);
     ctx.fillStyle = "rgba(40,50,30,0.22)";
@@ -1661,12 +1838,12 @@
       ctx.restore();
       return;
     }
-    const rate = weapon === "smg" ? 7.2 : 3.4;
+    const rate = weapon === "smg" ? 7.2 : weapon === "heavy" ? 2.4 : 3.4;
     if (Math.sin(bob * rate) > 0.55) {
       const mz = muzzleOf(id);
       const mx = (mz[0] - 0.5) * size.w;
       const my = -h + mz[1] * h;
-      drawMuzzleFlash(ctx, mx, my, k * (weapon === "smg" ? 1.15 : 1));
+      drawMuzzleFlash(ctx, mx, my, k * (weapon === "heavy" ? 1.45 : weapon === "smg" ? 1.15 : 1));
     }
     ctx.restore();
   }
@@ -1712,30 +1889,40 @@
       const sb = squad.slotOf(b.slot);
       return sa.z - sb.z;
     });
-    const weapon = squad.weapon === "smg" ? "smg" : "pistol";
+    const weapon = squad.weapon;
     const vis = squadVisualScale(squad.count);
     for (const s of members) {
       const slot = squad.slotOf(s.slot);
       const p = pr(squad.x + slot.x, 0, squad.z + slot.z, camX);
       drawSoldier(ctx, p.sx, p.sy, p.scale * vis, s.bob, s.flash, weapon);
+      if (squad.shielded) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(90, 170, 230, 0.7)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy - 28 * p.scale * vis, 22 * p.scale * vis, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   }
   function drawBullet(ctx, b, camX) {
     const p = pr(b.x, b.y, b.z, camX);
     const boosted = b.amplified;
-    const k = p.scale * (boosted ? 1.35 : 1);
+    const heavy = b.heavy;
+    const k = p.scale * (heavy ? 1.7 : boosted ? 1.35 : 1);
     ctx.save();
     ctx.translate(p.sx, p.sy);
-    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10 * k);
-    glow.addColorStop(0, boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, (heavy ? 14 : 10) * k);
+    glow.addColorStop(0, heavy ? "rgba(255,140,70,0.95)" : boosted ? "rgba(255,230,120,0.9)" : "rgba(255,240,170,0.7)");
     glow.addColorStop(1, "rgba(255,220,80,0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(0, 0, 10 * k, 0, Math.PI * 2);
+    ctx.arc(0, 0, (heavy ? 13 : 10) * k, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = boosted ? "#FFD24A" : "#F7E08A";
+    ctx.fillStyle = heavy ? "#FF8A3A" : boosted ? "#FFD24A" : "#F7E08A";
     ctx.beginPath();
-    ctx.ellipse(0, 0, 3.2 * k, 8 * k, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, (heavy ? 5.2 : 3.2) * k, (heavy ? 11 : 8) * k, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#FFF8D2";
     ctx.beginPath();
@@ -1762,6 +1949,7 @@
     ctx.restore();
   }
   function drawHud(ctx, hud) {
+    var _a, _b, _c, _d, _e;
     const px = 70;
     const py = 78;
     ctx.save();
@@ -1783,11 +1971,12 @@
     ctx.textBaseline = "middle";
     ctx.fillText("\xD7 " + hud.count, 132, 80);
     const wname = WEAPONS[hud.weapon].name;
-    const extra = hud.weapon === "smg" ? "  " + Math.ceil(Math.max(0, hud.weaponTime)) + "s" : "";
+    const extra = hud.weapon !== "pistol" ? "  " + Math.ceil(Math.max(0, hud.weaponTime)) + "s" : "";
     const midW = 230;
     const midX = (CANVAS_W - midW) / 2;
-    pill(ctx, midX, 48, midW, 60, hud.weapon === "smg" ? "rgba(255,236,190,0.96)" : "rgba(255,248,230,0.94)");
-    const iconId = hud.weapon === "smg" ? "icon_smg" : "icon_pistol";
+    const wcolor = hud.weapon === "heavy" ? "rgba(255,214,170,0.96)" : hud.weapon === "smg" ? "rgba(255,236,190,0.96)" : "rgba(255,248,230,0.94)";
+    pill(ctx, midX, 48, midW, 60, wcolor);
+    const iconId = hud.weapon === "pistol" ? "icon_pistol" : "icon_smg";
     drawSprite(ctx, iconId, midX + 36, 108, 36);
     ctx.fillStyle = "#5A3E22";
     ctx.font = 'bold 24px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif';
@@ -1801,12 +1990,25 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(formatTime(hud.remain), CANVAS_W - 112, 79);
+    pill(ctx, CANVAS_W - 206, 118, 172, 36, "rgba(255,248,230,0.94)");
+    ctx.fillStyle = "#5A3E22";
+    ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText("\u51FB\u6740 " + ((_a = hud.kills) != null ? _a : 0), CANVAS_W - 120, 137);
     if (hud.fireBonus > 0) {
       pill(ctx, 36, 122, 200, 36, "rgba(86,160,90,0.94)");
       ctx.fillStyle = "#FFFFFF";
       ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = "left";
       ctx.fillText("\u5C04\u901F\u63D0\u5347 " + hud.fireBonus.toFixed(1) + "s", 52, 141);
+    }
+    if (hud.shieldTime && hud.shieldTime > 0) {
+      const y = hud.fireBonus > 0 ? 164 : 122;
+      pill(ctx, 36, y, 200, 36, "rgba(70,140,200,0.94)");
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = "left";
+      ctx.fillText("\u62A4\u76FE " + hud.shieldTime.toFixed(1) + "s", 52, y + 19);
     }
     drawMute(ctx, hud.muted);
     if (hud.hint) {
@@ -1817,22 +2019,18 @@
       ctx.textBaseline = "middle";
       ctx.fillText("\u5DE6\u53F3\u6ED1\u52A8 \xB7 \u81EA\u52A8\u5F00\u706B \xB7 \u7A7F\u84DD\u95E8\u52A0\u4EBA", CANVAS_W / 2, CANVAS_H - 172);
     }
-    if (hud.warning) {
-      const pulse = 0.72 + Math.sin(hud.warning.timeLeft * 18) * 0.18;
-      pill(ctx, 150, 150, CANVAS_W - 300, 84, `rgba(180,36,32,${pulse})`);
-      ctx.fillStyle = "#FFFFFF";
-      ctx.font = 'bold 44px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("\u8EB2\u5F00\uFF01", CANVAS_W / 2, 194);
-    } else if (hud.rush) {
-      const pulse = 0.72 + Math.sin((hud.rush.timeLeft + 0.3) * 16) * 0.16;
-      pill(ctx, 130, 150, CANVAS_W - 260, 84, `rgba(196,110,24,${pulse})`);
+    const banner = hud.banner || (hud.warning ? hud.warning.lane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01" : hud.rush ? "\u5DE6\u9053\u6765\u88AD\uFF01" : null);
+    if (banner) {
+      const warn = banner.startsWith("\u8EB2\u5F00");
+      const rush = banner.includes("\u6765\u88AD") || banner.includes("\u5939\u51FB");
+      const pulse = 0.72 + Math.sin(((_e = (_d = (_b = hud.warning) == null ? void 0 : _b.timeLeft) != null ? _d : (_c = hud.rush) == null ? void 0 : _c.timeLeft) != null ? _e : 0.4) * 18) * 0.16;
+      const color = warn ? `rgba(180,36,32,${pulse})` : rush ? `rgba(196,110,24,${pulse})` : banner.includes("\xD72") ? `rgba(196,150,24,${pulse})` : `rgba(70,80,150,${pulse})`;
+      pill(ctx, 90, 164, CANVAS_W - 180, 84, color);
       ctx.fillStyle = "#FFFFFF";
       ctx.font = 'bold 40px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("\u5DE6\u9053\u6765\u88AD\uFF01", CANVAS_W / 2, 194);
+      ctx.fillText(banner, CANVAS_W / 2, 208);
     }
   }
   function pill(ctx, x, y, w, h, color) {
@@ -2053,6 +2251,7 @@
       this.weaponTime = 0;
       this.iframes = 0;
       this.fireBonus = 0;
+      this.shieldTime = 0;
       this.fireCd = 0;
       this.pool = new Pool(MAX_SQUAD, () => ({
         alive: false,
@@ -2070,6 +2269,7 @@
       this.weaponTime = 0;
       this.iframes = 0;
       this.fireBonus = 0;
+      this.shieldTime = 0;
       this.fireCd = 0;
       this.pool.clear();
       this.syncMembers();
@@ -2095,7 +2295,10 @@
       const overflow = Math.max(0, next - MAX_SQUAD);
       const applied = Math.min(MAX_SQUAD, Math.max(0, next));
       this.setCount(applied);
-      if (overflow > 0) this.fireBonus = OVERFLOW_BONUS_DURATION;
+      if (overflow > 0) {
+        this.fireBonus = OVERFLOW_BONUS_DURATION;
+        this.shieldTime = Math.max(this.shieldTime, OVERFLOW_SHIELD_DURATION);
+      }
       return { applied, overflow };
     }
     add(n) {
@@ -2104,8 +2307,16 @@
     mul(n) {
       return this.grow(this.count * n);
     }
+    get shielded() {
+      return this.shieldTime > 0;
+    }
+    grantShield(duration) {
+      this.shieldTime = Math.max(this.shieldTime, duration);
+    }
     lose(n) {
-      this.setCount(Math.max(0, this.count - n));
+      let lost = n;
+      if (this.shielded) lost = Math.max(1, Math.ceil(n * SHIELD_DAMAGE_MUL));
+      this.setCount(Math.max(0, this.count - lost));
       this.iframes = HIT_IFRAMES;
       for (const s of this.pool.active) s.flash = 0.22;
     }
@@ -2117,9 +2328,11 @@
       this.x = expDamp(this.x, clamp(targetX, -LANE_X, LANE_X), 10, dt);
       if (this.iframes > 0) this.iframes = Math.max(0, this.iframes - dt);
       if (this.fireBonus > 0) this.fireBonus = Math.max(0, this.fireBonus - dt);
+      if (this.shieldTime > 0) this.shieldTime = Math.max(0, this.shieldTime - dt);
       if (this.weapon !== "pistol") {
         this.weaponTime -= dt;
         if (this.weaponTime <= 0) {
+          if (this.count >= MAX_SQUAD) this.grantShield(CAP_EXPIRE_SHIELD);
           this.weapon = "pistol";
           this.weaponTime = 0;
         }
@@ -2200,6 +2413,22 @@
       this.rushUntil = 0;
       this.rushSpawned = false;
       this.nextRushAt = 0;
+      this.runSeed = 1;
+      this.scene = "day";
+      this.bannerText = null;
+      this.firstRushDone = false;
+      this.quietUntil = 0;
+      this.mercySpawned = false;
+      this.goldExpiresAt = 0;
+      this.nextGoldWindowI = 0;
+      this.namedKind = null;
+      this.namedSpawnAt = 0;
+      this.namedUntil = 0;
+      this.namedSpawned = false;
+      this.nextPincerI = 0;
+      this.nextAlleyI = 0;
+      this.nextPincerAt = 0;
+      this.nextAlleyAt = 0;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2268,8 +2497,16 @@
         })),
         bullets: this.bullets.pool.size,
         remain: this.time,
-        warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null,
+        warning: this.warningLane ? {
+          lane: this.warningLane,
+          timeLeft: Math.max(0, this.warningImpactAt - this.time),
+          text: this.warningLane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01"
+        } : null,
         rush: this.rushActive ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned } : null,
+        banner: this.currentBanner() ? { text: this.currentBanner() } : null,
+        scene: this.scene,
+        shieldTime: this.squad.shieldTime,
+        quiet: this.time < this.quietUntil,
         props: this.props.pool.active.map((p) => ({
           kind: p.kind,
           lane: p.lane,
@@ -2278,9 +2515,10 @@
         }))
       };
     }
-    beginRun() {
+    beginRun(seed) {
       this.state = "playing";
       this.time = 0;
+      this.runSeed = seed != null ? seed >>> 0 || 1 : (Math.random() * 2147483647 | 0) + 1;
       this.kills = 0;
       this.hint = true;
       this.hintTimer = 0;
@@ -2304,6 +2542,21 @@
       this.rushUntil = 0;
       this.rushSpawned = false;
       this.nextRushAt = RUSH_FIRST;
+      this.scene = "day";
+      this.bannerText = null;
+      this.firstRushDone = false;
+      this.quietUntil = 0;
+      this.mercySpawned = false;
+      this.goldExpiresAt = 0;
+      this.nextGoldWindowI = 0;
+      this.namedKind = null;
+      this.namedSpawnAt = 0;
+      this.namedUntil = 0;
+      this.namedSpawned = false;
+      this.nextPincerI = 0;
+      this.nextAlleyI = 0;
+      this.nextPincerAt = pincerTime(0, this.runSeed);
+      this.nextAlleyAt = alleyTime(0, this.runSeed);
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -2330,10 +2583,14 @@
       this.squad.update(dt, target);
       this.spawnDue();
       this.spawnEndless();
-      this.spawnGoldGate();
+      this.spawnMercy();
+      this.updateGold();
       this.spawnPropsDue();
+      this.updateScene();
       this.updateWarning();
       this.updateRush();
+      this.updateNamed();
+      this.updateAlleyDrift();
       this.gates.update(dt);
       this.props.update(dt);
       this.enemies.update(dt);
@@ -2351,8 +2608,10 @@
       }
     }
     spawnDue() {
+      const quiet = this.time < this.quietUntil;
       while (this.cursor < TIMELINE.length && TIMELINE[this.cursor].time <= this.time) {
         const ev = TIMELINE[this.cursor++];
+        if (quiet && ev.kind === "enemy") continue;
         this.applyEvent(ev);
         this.spawned.push(ev);
       }
@@ -2361,7 +2620,7 @@
     spawnEndless() {
       while (this.time >= this.nextHordeAt) {
         const t = this.nextHordeAt;
-        if (t >= this.hordeSkipUntil && !inRightLaneGap(t)) {
+        if (t >= this.hordeSkipUntil && t >= this.quietUntil && !inRightLaneGap(t)) {
           const a = ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length];
           const b = ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length];
           this.spawnEnemy(a, "right");
@@ -2372,7 +2631,7 @@
       }
       while (this.time >= this.nextGateAt) {
         const t = this.nextGateAt;
-        const ev = ENDLESS_GATE_CYCLE[this.endlessGateI % ENDLESS_GATE_CYCLE.length];
+        const ev = endlessGateFor(this.endlessGateI, this.runSeed);
         const pair = this.endlessGateI % 4 === 3;
         const pairKey = pair ? this.gates.nextPairKey() : 0;
         this.gates.spawn({
@@ -2403,16 +2662,150 @@
         hpMul: enemyHpMul(this.time)
       });
     }
-    spawnGoldGate() {
-      if (this.goldSpawned || this.time < GOLD_GATE_AT) return;
-      this.goldSpawned = true;
-      this.gates.spawn({
-        kind: "amp",
-        lane: "right",
-        label: "\xD72",
-        z: GOLD_GATE_Z,
-        stationary: true
-      });
+    spawnMercy() {
+      if (this.mercySpawned || this.time < MERCY_AT) return;
+      if (this.squad.count > MERCY_MAX_COUNT) {
+        this.mercySpawned = true;
+        return;
+      }
+      this.mercySpawned = true;
+      const mid = Math.abs(this.squad.x) < 1.2;
+      const lane = laneOfX(this.squad.x);
+      if (mid) {
+        const pair = this.gates.nextPairKey();
+        this.gates.spawn({ kind: "add", lane: "left", value: 2, label: "+2", pairKey: pair, z: MERCY_Z });
+        this.gates.spawn({ kind: "add", lane: "right", value: 2, label: "+2", pairKey: pair, z: MERCY_Z });
+      } else {
+        this.gates.spawn({ kind: "add", lane, value: 2, label: "+2", z: MERCY_Z });
+      }
+    }
+    updateGold() {
+      if (!this.goldSpawned && this.time >= GOLD_GATE_AT) {
+        this.goldSpawned = true;
+        this.gates.spawn({
+          kind: "amp",
+          lane: "right",
+          label: "\xD72",
+          z: GOLD_GATE_Z,
+          stationary: true
+        });
+        this.goldExpiresAt = GOLD_GATE_AT + GOLD_GATE_LIFE;
+      }
+      if (this.goldExpiresAt > 0 && this.time >= this.goldExpiresAt) {
+        this.clearAmpGates();
+        this.goldExpiresAt = 0;
+        if (this.namedKind === "gold") {
+          this.namedKind = null;
+          this.bannerText = null;
+        }
+      }
+      const due = goldWindowTime(this.nextGoldWindowI, this.runSeed);
+      if (this.time >= due && this.time >= GOLD_GATE_AT + GOLD_GATE_LIFE) {
+        if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") {
+          return;
+        }
+        this.nextGoldWindowI += 1;
+        this.clearAmpGates();
+        this.gates.spawn({
+          kind: "amp",
+          lane: "right",
+          label: "\xD72",
+          z: GOLD_WINDOW_Z,
+          stationary: true
+        });
+        this.goldExpiresAt = this.time + GOLD_WINDOW_LIFE;
+        this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.time + GOLD_WINDOW_LULL);
+        this.showNamed("gold", "\u53F3\u9053\xD72\uFF01\u5FEB\u5207", 2.8);
+      }
+    }
+    clearAmpGates() {
+      const list = this.gates.pool.active.slice();
+      for (const g of list) {
+        if (g.kind === "amp") this.gates.pool.release(g);
+      }
+    }
+    updateScene() {
+      if (this.scene === "day" && this.time >= SCENE_SHIFT_AT) {
+        this.scene = "night";
+        if (!this.warningLane && !this.rushActive && !this.namedKind) {
+          this.showNamed("scene", "\u8FDB\u5165\u591C\u8DEF\u53E3\uFF01", 2.4);
+        }
+      }
+    }
+    showNamed(kind, text, duration, spawnAt) {
+      this.namedKind = kind;
+      this.bannerText = text;
+      this.namedUntil = this.time + duration;
+      this.namedSpawned = spawnAt == null;
+      this.namedSpawnAt = spawnAt != null ? spawnAt : this.time;
+    }
+    currentBanner() {
+      if (this.warningLane) return this.warningLane === "left" ? "\u8EB2\u5F00\u5DE6\u9053\uFF01" : "\u8EB2\u5F00\u53F3\u9053\uFF01";
+      if (this.rushActive) return "\u5DE6\u9053\u6765\u88AD\uFF01";
+      if (this.namedKind && this.time < this.namedUntil && this.bannerText) return this.bannerText;
+      return null;
+    }
+    updateNamed() {
+      if (this.namedKind && this.time >= this.namedUntil && this.namedSpawned) {
+        if (this.namedKind === "pincer") {
+          this.nextPincerI += 1;
+          this.nextPincerAt = pincerTime(this.nextPincerI, this.runSeed);
+        }
+        if (this.namedKind === "alley") {
+          this.nextAlleyI += 1;
+          this.nextAlleyAt = alleyTime(this.nextAlleyI, this.runSeed);
+        }
+        if (this.namedKind !== "gold" && this.namedKind !== "scene") {
+          this.namedKind = null;
+          this.bannerText = null;
+        } else if (this.time >= this.namedUntil) {
+          if (this.namedKind !== "gold") {
+            this.namedKind = null;
+            this.bannerText = null;
+          }
+        }
+      }
+      if (this.namedKind === "pincer" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+        this.spawnPincerPack();
+        this.namedSpawned = true;
+      }
+      if (this.namedKind === "alley" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+        this.spawnAlleyPack();
+        this.namedSpawned = true;
+      }
+      if (this.namedKind || this.warningLane || this.rushActive || this.time < this.quietUntil) return;
+      if (this.time >= this.nextPincerAt && this.squad.count > 0) {
+        this.showNamed("pincer", "\u5DE6\u53F3\u5939\u51FB\uFF01", PINCER_TELEGRAPH + PINCER_BANNER, this.time + PINCER_TELEGRAPH);
+        return;
+      }
+      if (this.time >= this.nextAlleyAt && this.squad.count > 0 && this.scene === "night") {
+        this.showNamed("alley", "\u5DF7\u53E3\u6765\u88AD\uFF01", ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
+      }
+    }
+    spawnPincerPack() {
+      const left = rushPack(this.time);
+      const right = this.time >= 80 ? ["shield", "sprinter", "bomber"] : ["walker", "sprinter", "jumper"];
+      for (let i = 0; i < left.length; i++) {
+        this.spawnEnemy(left[i], "left", { z: RUSH_SPAWN_Z - i * 1.3, x: -LANE_X + (i - 1) * 0.5 });
+      }
+      for (let i = 0; i < right.length; i++) {
+        this.spawnEnemy(right[i], "right", { z: RUSH_SPAWN_Z - i * 1.3, x: LANE_X + (i - 1) * 0.5 });
+      }
+    }
+    spawnAlleyPack() {
+      const types = this.time >= 100 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
+      for (let i = 0; i < types.length; i++) {
+        this.spawnEnemy(types[i], "mid", {
+          z: ALLEY_SPAWN_Z - i * 1.4,
+          x: (i - 1) * 0.45,
+          driftX: this.squad.x
+        });
+      }
+    }
+    updateAlleyDrift() {
+      for (const e of this.enemies.pool.active) {
+        if (e.driftX != null) e.driftX = this.squad.x;
+      }
     }
     spawnPropsDue() {
       while (this.propCursor < PROP_EVENTS.length && PROP_EVENTS[this.propCursor].time <= this.time) {
@@ -2453,7 +2846,7 @@
         }
         return;
       }
-      if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive) {
+      if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil) {
         this.warningLane = laneOfX(this.squad.x);
         this.warningImpactAt = this.time + WARNING_TELEGRAPH;
       }
@@ -2487,11 +2880,19 @@
         if (this.time >= this.rushUntil) {
           this.rushActive = false;
           this.rushSpawned = false;
-          this.scheduleNextRush(this.time);
+          if (!this.firstRushDone) {
+            this.firstRushDone = true;
+            this.quietUntil = this.time + RUSH_QUIET;
+            this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.quietUntil);
+            this.scheduleNextRush(this.quietUntil);
+            if (this.nextWarningAt < this.quietUntil + 1.2) this.nextWarningAt = this.quietUntil + 1.6;
+          } else {
+            this.scheduleNextRush(this.time);
+          }
         }
         return;
       }
-      if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane) {
+      if (this.time >= this.nextRushAt && this.squad.count > 0 && !this.warningLane && !this.namedKind && this.time >= this.quietUntil) {
         if (this.nextWarningAt - this.time < RUSH_TELEGRAPH + 1.6) {
           this.nextRushAt = this.nextWarningAt + WARNING_TELEGRAPH + 1.2;
           return;
@@ -2540,7 +2941,7 @@
       let any = false;
       for (let i = 0; i < n; i++) {
         const src = shots[Math.floor(i * shots.length / n)];
-        if (this.bullets.spawn(src.x, src.z, damage)) any = true;
+        if (this.bullets.spawn(src.x, src.z, damage, { heavy: this.squad.weapon === "heavy" })) any = true;
       }
       if (any) this.audio.play("shoot");
     }
@@ -2599,7 +3000,7 @@
           const e = enemies[hitIndex];
           this.particles.sparks(e.x, 0.6 + e.y, e.z);
           this.audio.play("hit");
-          const dead = this.enemies.hurt(e, this.damageVs(b, e));
+          const dead = this.enemies.hurt(e, this.damageVs(b, e), { pierce: b.heavy });
           this.bullets.pool.release(b);
           if (dead) this.onEnemyKilled(e);
         }
@@ -2693,8 +3094,12 @@
         this.shake = 0.22;
         this.audio.play("red");
       } else if (g.kind === "weapon" && g.weapon) {
-        this.squad.equip(g.weapon === "smg" ? "smg" : "pistol");
+        const id = g.weapon;
+        this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
         this.audio.play("weapon");
+      } else if (g.kind === "shield") {
+        this.squad.grantShield(SHIELD_GATE_DURATION);
+        this.audio.play("gate");
       }
     }
     collideProps() {
@@ -2791,7 +3196,7 @@
       const camX = this.squad.x * 0.32;
       const sh = this.shake > 0 ? (Math.random() * 2 - 1) * 10 * this.shake : 0;
       const sv = this.shake > 0 ? (Math.random() * 2 - 1) * 8 * this.shake : 0;
-      drawWorld(ctx, camX, this.animTime, sh, sv);
+      drawWorld(ctx, camX, this.animTime, sh, sv, this.scene);
       const items = [];
       if (this.warningLane && this.state === "playing") {
         items.push({
@@ -2802,6 +3207,19 @@
         items.push({
           z: 28,
           draw: () => drawLaneWarning(ctx, "left", camX, this.rushSpawnAt - this.time, "rush")
+        });
+      } else if (this.namedKind === "pincer" && this.state === "playing") {
+        items.push({
+          z: 28,
+          draw: () => {
+            drawLaneWarning(ctx, "left", camX, this.namedSpawnAt - this.time, "rush");
+            drawLaneWarning(ctx, "right", camX, this.namedSpawnAt - this.time, "warn");
+          }
+        });
+      } else if (this.namedKind === "alley" && this.state === "playing") {
+        items.push({
+          z: 28,
+          draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "alley")
         });
       }
       for (const g of this.gates.pool.active) {
@@ -2828,14 +3246,17 @@
       if (this.state === "playing") {
         drawHud(ctx, {
           count: this.squad.count,
-          weapon: this.squad.weapon === "smg" ? "smg" : "pistol",
+          weapon: this.squad.weapon,
           weaponTime: this.squad.weaponTime,
           remain: this.time,
           fireBonus: this.squad.fireBonus,
           muted: this.audio.muted,
           hint: this.hint,
+          kills: this.kills,
+          shieldTime: this.squad.shieldTime,
           warning: this.warningLane ? { lane: this.warningLane, timeLeft: Math.max(0, this.warningImpactAt - this.time) } : null,
-          rush: this.rushActive ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned } : null
+          rush: this.rushActive ? { timeLeft: Math.max(0, this.rushSpawnAt - this.time), spawned: this.rushSpawned } : null,
+          banner: this.currentBanner()
         });
       } else if (this.state === "title") {
         drawTitle(ctx, this.best, this.audio.muted);

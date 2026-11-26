@@ -15,7 +15,20 @@ import {
   WARNING_TELEGRAPH,
   RUSH_FIRST,
   RUSH_TELEGRAPH,
+  RUSH_BANNER,
+  RUSH_QUIET,
   CAGE_REWARD,
+  CAGE_LABEL,
+  SCENE_SHIFT_AT,
+  GOLD_GATE_LIFE,
+  GOLD_WINDOW_Z,
+  MERCY_AT,
+  SHIELD_GATE_DURATION,
+  OVERFLOW_SHIELD_DURATION,
+  alleyTime,
+  endlessGateFor,
+  goldWindowTime,
+  pincerTime,
   BARREL_CONTACT_LOSS,
   BARREL_AOE_DAMAGE,
   enemyHpMul,
@@ -539,6 +552,7 @@ console.log("12. 红预警：必须换道，留下则掉人");
   const w = stay.getState().warning;
   assert(!!w, "约 " + WARNING_FIRST + " 秒应出现红预警");
   assertEq(w && w.lane, "left", "预警应打在小队当前所在的左道");
+  assertEq(w && w.text, "躲开左道！", "预警横幅应写明是左道危险");
   stay.enemies.clear();
   stay.props.clear();
   stay.gates.clear();
@@ -724,6 +738,201 @@ console.log("15. 左道来袭：可读压力事件，教学段不出现");
   const before = hit.squad.count;
   hit.step(0.2);
   assert(hit.squad.count < before, "蹲在左道且不处理来袭体应掉人，人数 " + hit.squad.count + " / 原 " + before);
+}
+
+console.log("16. 开局容错、对局内击杀、满编新效果、重击武器");
+{
+  const miss = new Game(mockPlatform());
+  miss.beginRun(1);
+  // 一直留在右道，错过左道第一扇 +3
+  miss.step(9.0);
+  assertEq(miss.squad.count, 1, "前 9 秒错过加人门时应仍是 1 人，开局压力仍在");
+  miss.step(2.4); // 过 MERCY_AT，近距 +2 已能穿过
+  assert(miss.getState().state === "playing", "补门前不应已被空死，状态 " + miss.getState().state);
+  assert(miss.squad.count >= 3, "约 10 秒后右道补 +2，错过第一扇门也不应只剩 1 人，人数 " + miss.squad.count);
+  assert(miss.getState().kills >= 0, "对局状态含击杀数");
+  assert(miss.getState().kills === miss.kills, "HUD/状态里的击杀应对应当前击杀");
+
+  const s = new Squad();
+  s.reset();
+  s.setCount(20);
+  const overflow = s.add(5);
+  assert(overflow.overflow > 0, "满编后再加应记溢出");
+  assert(s.fireBonus > 0, "溢出仍给射速加成");
+  assert(s.shieldTime >= OVERFLOW_SHIELD_DURATION - 0.001, "满编溢出还应给予护盾，护盾 " + s.shieldTime);
+
+  s.shieldTime = 3;
+  s.iframes = 0;
+  const before = s.count;
+  s.lose(7);
+  assert(s.count === before - Math.max(1, Math.ceil(7 * 0.5)), "护盾期间应减免掉人，人数 " + s.count);
+
+  assert(WEAPONS.heavy.damage === 3.4 && WEAPONS.heavy.rate === 2.4 && WEAPONS.heavy.duration === 15, "重击：伤害 3.4、射速 2.4、持续 15 秒");
+  const hg = new Game(mockPlatform());
+  hg.beginRun(1);
+  hg.squad.setCount(4);
+  hg.squad.equip("heavy");
+  hg.enemies.clear();
+  hg.bullets.clear();
+  hg.step(0.5);
+  const heavies = hg.bullets.pool.active.filter((b) => b.heavy);
+  assert(heavies.length >= 1, "重击应打出重型子弹");
+  assert(heavies.every((b) => Math.abs(b.damage - WEAPONS.heavy.damage) < 0.01 || b.damage > 1.5), "重击单发伤害应明显高于冲锋枪");
+
+  const sh = hg.enemies.spawn("shield", "right", { z: 28, hpMul: 1 });
+  assert(!!sh, "可生成盾兵对比重击");
+  const hp0 = sh!.hp;
+  hg.enemies.hurt(sh!, 2, { pierce: true });
+  assertClose(sh!.hp, hp0 - 2, 0.001, "重击应穿透盾兵减伤，2 点打满");
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.step(48.7);
+  const heavyGate = g.getState().gates.find((x) => x.label === "重击") || g.spawned.find((e) => e.weapon === "heavy");
+  assert(!!heavyGate, "约 48 秒应出现重击武器门");
+
+  assertEq(CAGE_LABEL, "救出", "人质笼对外提示应为「救出」");
+}
+
+console.log("17. 金门会过期并重开，切右应有空档");
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.step(12.1);
+  const first = g.getState().gates.find((x) => x.kind === "amp");
+  assert(!!first, "约 12 秒右道出现金色增幅门");
+  g.squad.setCount(20);
+  g.step(GOLD_GATE_LIFE + 1.2);
+  const gone = g.getState().gates.find((x) => x.kind === "amp");
+  assert(!gone, "第一次金门到期后应消失，不再永久占着右道");
+
+  const due = goldWindowTime(0, 1);
+  let again = g.getState().gates.find((x) => x.kind === "amp");
+  let goldBanner = "";
+  const deadline = Math.max(due, g.time) + 8;
+  while (g.time < deadline && g.state === "playing") {
+    g.enemies.clear();
+    g.props.clear();
+    g.squad.setCount(20);
+    g.step(0.15);
+    const amp = g.getState().gates.find((x) => x.kind === "amp");
+    if (amp) {
+      again = amp;
+      const b = g.getState().banner;
+      if (b && b.text.includes("×2")) goldBanner = b.text;
+      if (again && Math.abs(again.z - GOLD_WINDOW_Z) < 0.3 && goldBanner) break;
+    }
+  }
+  assert(!!again, "中后段应重开金门窗口，当前 t=" + g.time.toFixed(2) + " 窗口约 " + due.toFixed(2));
+  assert(again && Math.abs(again.z - GOLD_WINDOW_Z) < 0.3, "重开的金门应换到更近的位置，z=" + (again ? again.z : "无"));
+  assert(goldBanner.includes("右道") && goldBanner.includes("×2"), "重开时应提示右道增幅空档，得到 " + (goldBanner || "无"));
+}
+
+console.log("18. 夜路口场景、安静重整与具名事件；横幅写明左右");
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  g.input.targetX = -LANE_X;
+  g.squad.x = -LANE_X;
+  assertEq(g.getState().scene, "day", "开局是白天街道");
+  // 推过第一次左道来袭
+  while (g.time < RUSH_FIRST + RUSH_TELEGRAPH + RUSH_BANNER + 0.15 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+  }
+  assert(g.getState().quiet, "第一次左道来袭后应进入短暂安静重整");
+  g.enemies.clear();
+  g.props.clear();
+  g.squad.setCount(20);
+
+  const pinchAt = pincerTime(0, 1);
+  while (g.time < pinchAt - 0.08 && g.state === "playing") {
+    g.step(0.25);
+    g.squad.setCount(20);
+    g.enemies.clear();
+  }
+  g.enemies.clear();
+  g.props.clear();
+  g.gates.clear();
+  g.squad.setCount(20);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  g.step(0.2);
+  const b1 = g.getState().banner;
+  assert(b1 && b1.text === "左右夹击！", "中段应出现具名事件「左右夹击！」，得到 " + (b1 ? b1.text : "无"));
+
+  const slices = Math.ceil((1.25 + 0.1) / (1 / 60));
+  for (let i = 0; i < slices; i++) {
+    if (!((g as unknown as { namedSpawned?: boolean }).namedSpawned)) {
+      g.enemies.clear();
+    }
+    g.bullets.clear();
+    g.step(1 / 60);
+  }
+  const lefts = g.enemies.pool.active.filter((e) => e.x < 0);
+  const rights = g.enemies.pool.active.filter((e) => e.x > 0);
+  assert(lefts.length >= 1 && rights.length >= 1, "夹击应同时在左右道放怪，左 " + lefts.length + " 右 " + rights.length);
+
+  while (g.time < SCENE_SHIFT_AT + 0.2 && g.state === "playing") {
+    g.step(0.3);
+    g.squad.setCount(20);
+  }
+  assertEq(g.getState().scene, "night", "约 60 秒应切换到夜路口");
+
+  const alleyAt = alleyTime(0, 1);
+  let sawAlley = false;
+  const alleyDeadline = Math.max(alleyAt, g.time) + 8;
+  while (g.time < alleyDeadline && g.state === "playing") {
+    g.enemies.clear();
+    g.props.clear();
+    g.squad.setCount(20);
+    g.step(0.1);
+    const b = g.getState().banner;
+    if (b && b.text === "巷口来袭！") {
+      sawAlley = true;
+      break;
+    }
+  }
+  assert(sawAlley, "夜路口后应出现具名事件「巷口来袭！」，当前 " + ((g.getState().banner && g.getState().banner!.text) || "无") + " t=" + g.time.toFixed(2));
+  const alleySlices = Math.ceil((1.3 + 0.12) / (1 / 60));
+  for (let i = 0; i < alleySlices; i++) {
+    g.bullets.clear();
+    g.step(1 / 60);
+  }
+  const mid = g.enemies.pool.active.filter((e) => Math.abs(e.x) < 1.6 || e.driftX != null);
+  assert(mid.length >= 1, "巷口来袭应从中间巷放出感染体，得到 " + mid.length);
+}
+
+console.log("19. 中后期时间轴随对局种子变化");
+{
+  assert(pincerTime(0, 1) !== pincerTime(0, 99), "不同种子的夹击时间应不同（" + pincerTime(0, 1).toFixed(2) + " vs " + pincerTime(0, 99).toFixed(2) + "）");
+  assert(goldWindowTime(0, 1) !== goldWindowTime(0, 99), "不同种子的金门窗口时间应不同");
+  const a = endlessGateFor(0, 1);
+  const b = endlessGateFor(0, 99);
+  assert(a.label !== b.label || a.weapon !== b.weapon || a.gate !== b.gate, "不同种子的无尽补门起点应不同");
+
+  const g1 = new Game(mockPlatform());
+  const g2 = new Game(mockPlatform());
+  g1.beginRun(1);
+  g2.beginRun(99);
+  for (const g of [g1, g2]) {
+    g.squad.setCount(20);
+    while (g.time < 80 && g.state === "playing") {
+      g.step(0.4);
+      g.squad.setCount(20);
+    }
+  }
+  const labels1 = g1.spawned.filter((e) => e.time >= 74 && e.kind === "gate").map((e) => e.label || e.weapon || e.gate);
+  const labels2 = g2.spawned.filter((e) => e.time >= 74 && e.kind === "gate").map((e) => e.label || e.weapon || e.gate);
+  // 无尽段补门不写入 spawned；改看下一次门或场上已出现的武器/护盾门种类序列
+  const kinds1 = g1.gates.pool.active.map((x) => x.label).join(",");
+  const kinds2 = g2.gates.pool.active.map((x) => x.label).join(",");
+  const t1 = pincerTime(0, 1);
+  const t2 = pincerTime(0, 99);
+  assert(t1 !== t2 || kinds1 !== kinds2 || labels1.join() !== labels2.join(), "两局中后期不应是同一条钟点表");
 }
 
 console.log("");

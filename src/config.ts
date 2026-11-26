@@ -37,6 +37,13 @@ export const WEAPONS = {
     rate: 12,
     duration: 15,
   },
+  heavy: {
+    id: "heavy" as const,
+    name: "重击",
+    damage: 3.4,
+    rate: 2.4,
+    duration: 15,
+  },
 };
 
 export type WeaponId = keyof typeof WEAPONS;
@@ -136,9 +143,14 @@ export const GOLD_NEAR_MUL = 0.5;
 export const HP_SCALE_START = 10;
 export const HP_SCALE_PER_SEC = 0.02;
 
+export const HP_SCALE_LATE_START = 60;
+export const HP_SCALE_LATE_PER_SEC = 0.012;
+
 export function enemyHpMul(t: number): number {
   if (t <= HP_SCALE_START) return 1;
-  return 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+  let mul = 1 + (t - HP_SCALE_START) * HP_SCALE_PER_SEC;
+  if (t > HP_SCALE_LATE_START) mul += (t - HP_SCALE_LATE_START) * HP_SCALE_LATE_PER_SEC;
+  return mul;
 }
 
 /** 红预警：先约 28 秒出现，之后间隔明显收紧 */
@@ -147,7 +159,7 @@ export const WARNING_TELEGRAPH = 1.2;
 export const WARNING_DAMAGE = 7;
 
 export function warningPeriod(t: number): number {
-  return Math.max(8, 13.5 - Math.max(0, t - WARNING_FIRST) * 0.06);
+  return Math.max(7, 13.0 - Math.max(0, t - WARNING_FIRST) * 0.07);
 }
 
 /** 左道来袭：教学结束后的可读压力事件，惩罚一直蹲左道 */
@@ -166,8 +178,60 @@ export function rushPack(t: number): EnemyId[] {
   return ["walker", "walker", "sprinter"];
 }
 
+/** 满编溢出时，除射速加成外再给短护盾 */
+export const OVERFLOW_SHIELD_DURATION = 3.5;
+export const SHIELD_DAMAGE_MUL = 0.5;
+export const SHIELD_GATE_DURATION = 4;
+export const CAP_EXPIRE_SHIELD = 2.5;
+
+/** 约 60 秒切换夜路口场景 */
+export const SCENE_SHIFT_AT = 60;
+
+/** 金色增幅门不再永久停住：第一次持续一段时间后消失，之后短暂重开 */
+export const GOLD_GATE_LIFE = 16;
+export const GOLD_WINDOW_LIFE = 10;
+export const GOLD_WINDOW_LULL = 2.4;
+export const GOLD_WINDOW_Z = 32;
+export const GOLD_WINDOW_BASE = [56, 84, 114];
+
+/** 第一次左道来袭后的安静重整，再进入具名事件 */
+export const RUSH_QUIET = 5.2;
+export const PINCER_FIRST = 52;
+export const PINCER_TELEGRAPH = 1.25;
+export const PINCER_BANNER = 2.6;
+export const PINCER_PERIOD = 22;
+export const ALLEY_FIRST = 68;
+export const ALLEY_TELEGRAPH = 1.3;
+export const ALLEY_BANNER = 2.6;
+export const ALLEY_PERIOD = 24;
+export const ALLEY_SPAWN_Z = 40;
+
+/** 错过第一扇加人门时，右道补一扇小 +2，不改开局 10 秒压力 */
+export const MERCY_AT = 10.2;
+export const MERCY_MAX_COUNT = 2;
+export const MERCY_Z = 22;
+
+export function seedOffset(seed: number, key: number, span: number): number {
+  const x = Math.imul(seed ^ (key * 0x9e3779b9), 0x85ebca6b) >>> 0;
+  return (x / 0xffffffff - 0.5) * 2 * span;
+}
+
+export function goldWindowTime(index: number, seed: number): number {
+  const base = GOLD_WINDOW_BASE[index] ?? (GOLD_WINDOW_BASE[GOLD_WINDOW_BASE.length - 1] + (index - GOLD_WINDOW_BASE.length + 1) * 30);
+  return base + seedOffset(seed, 17 + index, 2.2);
+}
+
+export function pincerTime(index: number, seed: number): number {
+  return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, 2.0);
+}
+
+export function alleyTime(index: number, seed: number): number {
+  return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 2.4);
+}
+
 export const CAGE_HP = 8;
 export const CAGE_REWARD = 3;
+export const CAGE_LABEL = "救出";
 export const BARREL_HP = 3;
 export const BARREL_AOE_RADIUS = 3.4;
 export const BARREL_AOE_DAMAGE = 8;
@@ -182,7 +246,7 @@ export interface PropEvent {
   lane: PropLane;
 }
 
-export type GateKind = "add" | "mul" | "weapon" | "red" | "amp";
+export type GateKind = "add" | "mul" | "weapon" | "red" | "amp" | "shield";
 
 export interface TimelineEvent {
   /** 在远处置入并进入画面的时间（秒） */
@@ -217,7 +281,7 @@ const GATE_EVENTS: TimelineEvent[] = [
   // —— 40–70 秒：约 40 秒后出现成对红门 -3 / 蓝门 +3 ——
   { time: 40.5, kind: "gate", lane: "right", gate: "red", value: 3, label: "-3" },
   { time: 40.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
-  { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
+  { time: 48.5, kind: "gate", lane: "left", gate: "weapon", weapon: "heavy", label: "重击" },
   { time: 51.0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 58.0, kind: "gate", lane: "left", gate: "red", value: 3, label: "-3" },
   { time: 62.5, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
@@ -303,14 +367,20 @@ export const ENDLESS_GATE_PERIOD = 10;
 export const ENDLESS_GATE_CYCLE: TimelineEvent[] = [
   { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
   { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
+  { time: 0, kind: "gate", lane: "left", gate: "shield", label: "护盾" },
   { time: 0, kind: "gate", lane: "left", gate: "add", value: 3, label: "+3" },
+  { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "heavy", label: "重击" },
   { time: 0, kind: "gate", lane: "left", gate: "add", value: 5, label: "+5" },
-  { time: 0, kind: "gate", lane: "left", gate: "weapon", weapon: "smg", label: "冲锋枪" },
 ];
 
-/** 无尽段成对出怪的间隔，随时间继续加密，最短 0.16 秒 */
+export function endlessGateFor(index: number, seed: number): TimelineEvent {
+  const i = (index + (seed >>> 0) % ENDLESS_GATE_CYCLE.length) % ENDLESS_GATE_CYCLE.length;
+  return ENDLESS_GATE_CYCLE[i];
+}
+
+/** 无尽段成对出怪的间隔，后期继续加密，最短 0.14 秒 */
 export function endlessHordeInterval(t: number): number {
-  return Math.max(0.16, 0.26 - Math.max(0, t - 70) * 0.0018);
+  return Math.max(0.14, 0.24 - Math.max(0, t - 70) * 0.002);
 }
 
 /** 无尽段轮换出怪，特殊体占比更高 */
