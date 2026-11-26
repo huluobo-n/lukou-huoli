@@ -141,7 +141,15 @@
   var WARNING_FIRST = 28;
   var WARNING_TELEGRAPH = 1.2;
   var WARNING_DAMAGE = 7;
+  var WARNING_DAMAGE_NIGHT_MAX = 4;
+  function warningDamage(t, count) {
+    if (t < SCENE_SHIFT_AT) return WARNING_DAMAGE;
+    return Math.min(WARNING_DAMAGE_NIGHT_MAX, Math.max(2, Math.ceil(count * 0.25)));
+  }
   function warningPeriod(t) {
+    if (t >= 80 && t < HOLD_FIRST) {
+      return Math.max(16, 18 - Math.max(0, t - 80) * 0.02);
+    }
     if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
       return Math.max(12, 14 - Math.max(0, t - SCENE_SHIFT_AT) * 0.015);
     }
@@ -152,13 +160,16 @@
   var RUSH_SPAWN_Z = 42;
   var RUSH_BANNER = 2.4;
   function rushPeriod(t) {
+    if (t >= 80 && t < HOLD_FIRST) {
+      return Math.max(22, 24 - Math.max(0, t - 80) * 0.02);
+    }
     if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
       return Math.max(18, 20 - Math.max(0, t - SCENE_SHIFT_AT) * 0.02);
     }
     return Math.max(10, 16.5 - Math.max(0, t - RUSH_FIRST) * 0.05);
   }
   function rushPack(t) {
-    if (t >= 80) return ["bomber", "jumper", "sprinter"];
+    if (t >= HOLD_FIRST) return ["bomber", "jumper", "sprinter"];
     if (t >= 60) return ["jumper", "walker", "sprinter"];
     return ["walker", "walker", "sprinter"];
   }
@@ -180,7 +191,7 @@
   var PINCER_TELEGRAPH = 1.25;
   var PINCER_BANNER = 2.6;
   var PINCER_PERIOD = 40;
-  var PINCER_NIGHT_FIRST = 118;
+  var PINCER_NIGHT_FIRST = 168;
   var ALLEY_FIRST = 88;
   var ALLEY_TELEGRAPH = 1.3;
   var ALLEY_BANNER = 2.6;
@@ -192,6 +203,7 @@
   var HOLD_DURATION = 5.2;
   var HOLD_DAMAGE = 8;
   var HOLD_MID = 1.15;
+  var HOLD_SETTLE = 12;
   var ENDLESS_GATE_PERIOD_LATE = 14;
   var LATE_REFILL = 1;
   var LATE_REFILL_LOW = 2;
@@ -222,7 +234,8 @@
     return PINCER_NIGHT_FIRST + (index - 1) * PINCER_PERIOD + seedOffset(seed, 31 + index, 4.5);
   }
   function alleyTime(index, seed) {
-    return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 5.5);
+    const base = index === 0 ? ALLEY_FIRST : Math.max(HOLD_FIRST + 24, ALLEY_FIRST + index * ALLEY_PERIOD);
+    return base + seedOffset(seed, 53 + index, index === 0 ? 5.5 : 4);
   }
   function holdTime(seed) {
     return HOLD_FIRST + seedOffset(seed, 71, 8);
@@ -347,6 +360,9 @@
     return ENDLESS_GATE_CYCLE[i];
   }
   function endlessHordeInterval(t) {
+    if (t >= 80 && t < HOLD_FIRST) {
+      return Math.max(0.34, 0.44 - Math.max(0, t - 80) * 1e-3);
+    }
     if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST) {
       return Math.max(0.3, 0.4 - Math.max(0, t - 70) * 1e-3);
     }
@@ -2716,6 +2732,7 @@
       this.lastWarnLane = null;
       this.lastAlleyAt = 0;
       this.nightHordeToggle = false;
+      this.preHoldRefill = false;
       this.paused = false;
       this.running = false;
       this.lastTs = 0;
@@ -2865,6 +2882,7 @@
       this.lastWarnLane = null;
       this.lastAlleyAt = 0;
       this.nightHordeToggle = false;
+      this.preHoldRefill = false;
       this.spawned.length = 0;
       this.squad.reset();
       this.enemies.clear();
@@ -2902,6 +2920,7 @@
       this.spawnPropsDue();
       this.relabelActiveGates();
       this.updateScene();
+      this.updateHoldPrelude();
       this.updateWarning();
       this.updateRush();
       this.updateNamed();
@@ -2944,8 +2963,9 @@
       while (this.time >= this.nextHordeAt) {
         const t = this.nextHordeAt;
         if (t >= this.hordeSkipUntil && t >= this.quietUntil && !inRightLaneGap(t)) {
-          const a = ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length];
-          const b = ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length];
+          const swap = (id) => t < 150 && id === "bomber" ? "walker" : id;
+          const a = swap(ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length]);
+          const b = swap(ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length]);
           this.spawnEnemy(a, "right");
           this.spawnEnemy(b, "right");
           this.endlessMixI += 2;
@@ -3123,12 +3143,12 @@
       this.squad.weaponTime = NIGHT_HEAVY_LOCK;
       this.squad.grantShield(NIGHT_SHIELD_DURATION);
     }
-    pushEventsPast(until) {
+    pushEventsPast(until, keepHold = false) {
       if (this.nextWarningAt < until) this.nextWarningAt = until + 0.4;
       if (this.nextRushAt < until) this.nextRushAt = until + 0.8;
       if (this.nextPincerAt < until) this.nextPincerAt = until + 1.2;
       if (this.nextAlleyAt < until) this.nextAlleyAt = until + 1.8;
-      if (this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
+      if (!keepHold && this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
     }
     showNamed(kind, text, duration, spawnAt, exclusive = false) {
       this.namedKind = kind;
@@ -3191,6 +3211,33 @@
         this.alleyFacing = side;
         this.lastAlleyAt = this.time;
         this.showNamed("alley", alleyBannerText(this.alleyFacing), ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
+      }
+    }
+    updateHoldPrelude() {
+      if (this.holdStarted || this.stormStarted || this.scene === "day" || this.scene === "storm") return;
+      if (this.squad.count <= 0) return;
+      if (this.nextHoldAt - this.time > HOLD_SETTLE || this.time > this.nextHoldAt + 0.05) return;
+      this.pushEventsPast(this.nextHoldAt + 0.8, true);
+      this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.nextHoldAt);
+      this.quietUntil = Math.max(this.quietUntil, Math.min(this.nextHoldAt, this.time + 6));
+      if (this.warningLane) {
+        this.warningLane = null;
+        this.scheduleNextWarning(this.nextHoldAt + 0.8);
+      }
+      if (this.rushActive && !this.rushSpawned) {
+        this.rushActive = false;
+        this.rushSpawned = false;
+        this.scheduleNextRush(this.nextHoldAt + 0.8);
+      }
+      if (!this.preHoldRefill) {
+        this.preHoldRefill = true;
+        const atCap = this.squad.count >= 20;
+        if (atCap) {
+          this.gates.spawn({ kind: "shield", lane: "mid", label: "\u62A4\u76FE", z: 36 });
+        } else {
+          const v = Math.max(2, lateRefillAmount(this.squad.count));
+          this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 36 });
+        }
       }
     }
     updateHold() {
@@ -3270,7 +3317,7 @@
     }
     spawnPincerPack() {
       const left = rushPack(this.time);
-      const right = this.time >= 80 ? ["shield", "sprinter", "bomber"] : ["walker", "sprinter", "jumper"];
+      const right = this.time >= 150 ? ["shield", "sprinter", "bomber"] : ["walker", "sprinter", "jumper"];
       for (let i = 0; i < left.length; i++) {
         this.spawnEnemy(left[i], "left", { z: RUSH_SPAWN_Z - i * 1.3, x: -LANE_X + (i - 1) * 0.5 });
       }
@@ -3279,7 +3326,7 @@
       }
     }
     spawnAlleyPack() {
-      const types = this.time >= 100 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
+      const types = this.time >= 150 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
       const side = this.alleyFacing;
       for (let i = 0; i < types.length; i++) {
         let fromLeft = side === "left" || side === "both" && i % 2 === 0;
@@ -3328,7 +3375,7 @@
           this.lastWarnLane = lane;
           if (lane === "right") this.lastRightWarnAt = this.time;
           if (inLane(this.squad.x, lane) && this.squad.count > 0) {
-            this.squad.lose(WARNING_DAMAGE);
+            this.squad.lose(warningDamage(this.time, this.squad.count));
             this.shake = 0.32;
             this.audio.play("red");
           }
@@ -3631,9 +3678,15 @@
         this.audio.play("red");
       } else if (g.kind === "weapon" && g.weapon) {
         const id = g.weapon;
-        if (this.nightHeavyLocked() && id !== "heavy") {
+        if (id !== "heavy" && this.nightHeavyLocked()) {
           this.squad.grantShield(SHIELD_GATE_DURATION);
           this.audio.play("gate");
+        } else if (id === "heavy") {
+          const keep = this.squad.weapon === "heavy" ? this.squad.weaponTime : 0;
+          const lockLeft = Math.max(0, SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - this.time);
+          this.squad.equip("heavy");
+          this.squad.weaponTime = Math.max(this.squad.weaponTime, keep, lockLeft);
+          this.audio.play("weapon");
         } else {
           this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
           this.audio.play("weapon");

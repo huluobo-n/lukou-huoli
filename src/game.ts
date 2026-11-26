@@ -27,6 +27,7 @@ import {
   HOLD_DAMAGE,
   HOLD_DURATION,
   HOLD_MID,
+  HOLD_SETTLE,
   HOLD_TELEGRAPH,
   LATE_REFILL_LOW,
   LANE_HALF,
@@ -56,7 +57,6 @@ import {
   SHIELD_GATE_DURATION,
   TEAM_Z,
   TIMELINE,
-  WARNING_DAMAGE,
   WARNING_FIRST,
   WARNING_TELEGRAPH,
   alleyBannerText,
@@ -77,6 +77,7 @@ import {
   rushPack,
   rushPeriod,
   softenGate,
+  warningDamage,
   warningPeriod,
   type EnemyId,
   type SceneId,
@@ -217,6 +218,7 @@ export class Game {
   private lastWarnLane: "left" | "right" | null = null;
   private lastAlleyAt = 0;
   private nightHordeToggle = false;
+  private preHoldRefill = false;
   paused = false;
   private running = false;
   private lastTs = 0;
@@ -376,6 +378,7 @@ export class Game {
     this.lastWarnLane = null;
     this.lastAlleyAt = 0;
     this.nightHordeToggle = false;
+    this.preHoldRefill = false;
     this.spawned.length = 0;
     this.squad.reset();
     this.enemies.clear();
@@ -418,6 +421,7 @@ export class Game {
     this.spawnPropsDue();
     this.relabelActiveGates();
     this.updateScene();
+    this.updateHoldPrelude();
     this.updateWarning();
     this.updateRush();
     this.updateNamed();
@@ -469,8 +473,9 @@ export class Game {
     while (this.time >= this.nextHordeAt) {
       const t = this.nextHordeAt;
       if (t >= this.hordeSkipUntil && t >= this.quietUntil && !inRightLaneGap(t)) {
-        const a = ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length];
-        const b = ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length];
+        const swap = (id: EnemyId): EnemyId => (t < 150 && id === "bomber" ? "walker" : id);
+        const a = swap(ENDLESS_MIX[this.endlessMixI % ENDLESS_MIX.length]);
+        const b = swap(ENDLESS_MIX[(this.endlessMixI + 1) % ENDLESS_MIX.length]);
         this.spawnEnemy(a, "right");
         this.spawnEnemy(b, "right");
         this.endlessMixI += 2;
@@ -674,12 +679,12 @@ export class Game {
     this.squad.grantShield(NIGHT_SHIELD_DURATION);
   }
 
-  private pushEventsPast(until: number): void {
+  private pushEventsPast(until: number, keepHold = false): void {
     if (this.nextWarningAt < until) this.nextWarningAt = until + 0.4;
     if (this.nextRushAt < until) this.nextRushAt = until + 0.8;
     if (this.nextPincerAt < until) this.nextPincerAt = until + 1.2;
     if (this.nextAlleyAt < until) this.nextAlleyAt = until + 1.8;
-    if (this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
+    if (!keepHold && this.nextHoldAt < until + 4) this.nextHoldAt = until + 6;
   }
 
   private showNamed(
@@ -758,6 +763,34 @@ export class Game {
       this.alleyFacing = side;
       this.lastAlleyAt = this.time;
       this.showNamed("alley", alleyBannerText(this.alleyFacing), ALLEY_TELEGRAPH + ALLEY_BANNER, this.time + ALLEY_TELEGRAPH);
+    }
+  }
+
+  private updateHoldPrelude(): void {
+    if (this.holdStarted || this.stormStarted || this.scene === "day" || this.scene === "storm") return;
+    if (this.squad.count <= 0) return;
+    if (this.nextHoldAt - this.time > HOLD_SETTLE || this.time > this.nextHoldAt + 0.05) return;
+    this.pushEventsPast(this.nextHoldAt + 0.8, true);
+    this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.nextHoldAt);
+    this.quietUntil = Math.max(this.quietUntil, Math.min(this.nextHoldAt, this.time + 6));
+    if (this.warningLane) {
+      this.warningLane = null;
+      this.scheduleNextWarning(this.nextHoldAt + 0.8);
+    }
+    if (this.rushActive && !this.rushSpawned) {
+      this.rushActive = false;
+      this.rushSpawned = false;
+      this.scheduleNextRush(this.nextHoldAt + 0.8);
+    }
+    if (!this.preHoldRefill) {
+      this.preHoldRefill = true;
+      const atCap = this.squad.count >= 20;
+      if (atCap) {
+        this.gates.spawn({ kind: "shield", lane: "mid", label: "护盾", z: 36 });
+      } else {
+        const v = Math.max(2, lateRefillAmount(this.squad.count));
+        this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 36 });
+      }
     }
   }
 
@@ -845,7 +878,7 @@ export class Game {
 
   private spawnPincerPack(): void {
     const left = rushPack(this.time);
-    const right = this.time >= 80 ? (["shield", "sprinter", "bomber"] as EnemyId[]) : (["walker", "sprinter", "jumper"] as EnemyId[]);
+    const right = this.time >= 150 ? (["shield", "sprinter", "bomber"] as EnemyId[]) : (["walker", "sprinter", "jumper"] as EnemyId[]);
     for (let i = 0; i < left.length; i++) {
       this.spawnEnemy(left[i], "left", { z: RUSH_SPAWN_Z - i * 1.3, x: -LANE_X + (i - 1) * 0.5 });
     }
@@ -855,7 +888,7 @@ export class Game {
   }
 
   private spawnAlleyPack(): void {
-    const types: EnemyId[] = this.time >= 100 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
+    const types: EnemyId[] = this.time >= 150 ? ["jumper", "bomber", "splitter"] : ["jumper", "walker", "sprinter"];
     const side = this.alleyFacing;
     for (let i = 0; i < types.length; i++) {
       let fromLeft = side === "left" || (side === "both" && i % 2 === 0);
@@ -910,7 +943,7 @@ export class Game {
         this.lastWarnLane = lane;
         if (lane === "right") this.lastRightWarnAt = this.time;
         if (inLane(this.squad.x, lane) && this.squad.count > 0) {
-          this.squad.lose(WARNING_DAMAGE);
+          this.squad.lose(warningDamage(this.time, this.squad.count));
           this.shake = 0.32;
           this.audio.play("red");
         }
@@ -1238,9 +1271,15 @@ export class Game {
       this.audio.play("red");
     } else if (g.kind === "weapon" && g.weapon) {
       const id = g.weapon as WeaponId;
-      if (this.nightHeavyLocked() && id !== "heavy") {
+      if (id !== "heavy" && this.nightHeavyLocked()) {
         this.squad.grantShield(SHIELD_GATE_DURATION);
         this.audio.play("gate");
+      } else if (id === "heavy") {
+        const keep = this.squad.weapon === "heavy" ? this.squad.weaponTime : 0;
+        const lockLeft = Math.max(0, SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - this.time);
+        this.squad.equip("heavy");
+        this.squad.weaponTime = Math.max(this.squad.weaponTime, keep, lockLeft);
+        this.audio.play("weapon");
       } else {
         this.squad.equip(id in { smg: 1, heavy: 1 } ? id : "pistol");
         this.audio.play("weapon");

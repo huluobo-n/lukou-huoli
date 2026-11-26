@@ -162,9 +162,19 @@ export function enemyHpMul(t: number): number {
 export const WARNING_FIRST = 28;
 export const WARNING_TELEGRAPH = 1.2;
 export const WARNING_DAMAGE = 7;
+export const WARNING_DAMAGE_NIGHT_MAX = 4;
+
+/** 白天躲开仍掉 7 人；入夜后按人数比例惩罚，最多 4、至少 2，避免一条横幅打残 */
+export function warningDamage(t: number, count: number): number {
+  if (t < SCENE_SHIFT_AT) return WARNING_DAMAGE;
+  return Math.min(WARNING_DAMAGE_NIGHT_MAX, Math.max(2, Math.ceil(count * 0.25)));
+}
 
 export function warningPeriod(t: number): number {
-  // 入夜到岔路口前拉开间隔，避免躲开/巷口/夹击叠在一起，让人能打到 2:30
+  // 1:20–2:30 再拉开躲开间隔，岔路口前不要连着砸
+  if (t >= 80 && t < HOLD_FIRST) {
+    return Math.max(16, 18.0 - Math.max(0, t - 80) * 0.02);
+  }
   if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
     return Math.max(12, 14.0 - Math.max(0, t - SCENE_SHIFT_AT) * 0.015);
   }
@@ -178,6 +188,9 @@ export const RUSH_SPAWN_Z = 42;
 export const RUSH_BANNER = 2.4;
 
 export function rushPeriod(t: number): number {
+  if (t >= 80 && t < HOLD_FIRST) {
+    return Math.max(22, 24.0 - Math.max(0, t - 80) * 0.02);
+  }
   if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
     return Math.max(18, 20.0 - Math.max(0, t - SCENE_SHIFT_AT) * 0.02);
   }
@@ -185,7 +198,7 @@ export function rushPeriod(t: number): number {
 }
 
 export function rushPack(t: number): EnemyId[] {
-  if (t >= 80) return ["bomber", "jumper", "sprinter"];
+  if (t >= HOLD_FIRST) return ["bomber", "jumper", "sprinter"];
   if (t >= 60) return ["jumper", "walker", "sprinter"];
   return ["walker", "walker", "sprinter"];
 }
@@ -217,7 +230,7 @@ export const PINCER_FIRST = 52;
 export const PINCER_TELEGRAPH = 1.25;
 export const PINCER_BANNER = 2.6;
 export const PINCER_PERIOD = 40;
-export const PINCER_NIGHT_FIRST = 118;
+export const PINCER_NIGHT_FIRST = 168;
 export const ALLEY_FIRST = 88;
 export const ALLEY_TELEGRAPH = 1.3;
 export const ALLEY_BANNER = 2.6;
@@ -231,6 +244,7 @@ export const HOLD_TELEGRAPH = 1.6;
 export const HOLD_DURATION = 5.2;
 export const HOLD_DAMAGE = 8;
 export const HOLD_MID = 1.15;
+export const HOLD_SETTLE = 12;
 export const ENDLESS_GATE_PERIOD_LATE = 14;
 
 /** 入夜后小幅补人，极低人数时可补 +2，但绝不能一扇补满 */
@@ -270,7 +284,9 @@ export function pincerTime(index: number, seed: number): number {
 }
 
 export function alleyTime(index: number, seed: number): number {
-  return ALLEY_FIRST + index * ALLEY_PERIOD + seedOffset(seed, 53 + index, 5.5);
+  // 第一次巷口约 1:28；第二次推到岔路口之后，避免 2:10 再叠在分叉前
+  const base = index === 0 ? ALLEY_FIRST : Math.max(HOLD_FIRST + 24, ALLEY_FIRST + index * ALLEY_PERIOD);
+  return base + seedOffset(seed, 53 + index, index === 0 ? 5.5 : 4.0);
 }
 
 export function holdTime(seed: number): number {
@@ -474,6 +490,9 @@ export function endlessGateFor(index: number, seed: number): TimelineEvent {
 /** 无尽段成对出怪的间隔，后期继续加密，最短 0.14 秒 */
 export function endlessHordeInterval(t: number): number {
   // 入夜到 2:30 前降低密度，岔路口后再加密
+  if (t >= 80 && t < HOLD_FIRST) {
+    return Math.max(0.34, 0.44 - Math.max(0, t - 80) * 0.001);
+  }
   if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST) {
     return Math.max(0.30, 0.40 - Math.max(0, t - 70) * 0.001);
   }

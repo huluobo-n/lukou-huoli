@@ -33,6 +33,7 @@ import {
   GOLD_CLOSE_BANNER,
   GOLD_WARN_SETTLE,
   HOLD_FIRST,
+  HOLD_SETTLE,
   EVENT_GAP,
   OPENING_END,
   STORM_DELAY,
@@ -52,6 +53,7 @@ import {
   rushPack,
   rushPeriod,
   warningPeriod,
+  warningDamage,
 } from "../src/config";
 import { Game } from "../src/game";
 import { LEGAL_AGE, LEGAL_PRIVACY, LEGAL_SUMMARY } from "../src/legal";
@@ -708,7 +710,7 @@ console.log("15. 左道来袭：可读压力事件，教学段不出现");
   assert(rushPeriod(200) < rushPeriod(RUSH_FIRST), "岔路口之后左道来袭间隔应随时间收紧");
   assert(rushPack(40).length >= 3 && rushPack(40).every((id) => id === "walker" || id === "sprinter"), "中期来袭是游走体和冲刺体小队");
   assert(rushPack(65).includes("jumper"), "60 秒后来袭应混入跳跃体");
-  assert(rushPack(85).includes("bomber"), "80 秒后来袭应混入爆裂体");
+  assert(rushPack(HOLD_FIRST + 5).includes("bomber"), "岔路口后来袭应混入爆裂体");
 
   const g = new Game(mockPlatform());
   g.beginRun();
@@ -1500,6 +1502,97 @@ console.log("27. 第四轮：入夜压力、雨夜空档、金门指令、补人
   assert(hold.state === "playing", "守住中道后不应在几秒内团灭，状态 " + hold.state);
   assertEq(hold.getState().scene, "storm", "岔路口结束后应进入雨夜");
   assert(sawStorm, "雨夜推进横幅必须能看见，不能被团灭跳过");
+}
+
+console.log("28. 第五轮：1:20–2:05 放缓、躲开不再打残、分叉前空档、重击门不缩短计时");
+{
+  assert(warningPeriod(100) >= 16, "1:20–2:05 红预警间隔应再拉开");
+  assert(rushPeriod(100) >= 22, "1:20–2:05 左道来袭间隔应再拉开");
+  assert(rushPack(90).every((id) => id !== "bomber"), "岔路口前来袭不应再夹爆裂体");
+  assert(alleyTime(1, 1) >= HOLD_FIRST, "第二次巷口应在岔路口之后，得到 " + alleyTime(1, 1).toFixed(2));
+  assert(pincerTime(1, 1) >= HOLD_FIRST, "入夜后的夹击应推到岔路口之后，得到 " + pincerTime(1, 1).toFixed(2));
+  assertEq(warningDamage(28, 20), WARNING_DAMAGE, "白天躲开仍应是 7 人惩罚");
+  assert(warningDamage(90, 16) <= 4 && warningDamage(90, 16) >= 2, "入夜后 16 人躲开不应再掉 7 人，得到 " + warningDamage(90, 16));
+  assert(8 - warningDamage(140, 8) >= 4, "8 人时躲开后至少还剩 4 人，掉 " + warningDamage(140, 8));
+
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(16);
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  while (g.time < 80 && g.state === "playing") {
+    g.step(0.3);
+    g.squad.setCount(16);
+    g.squad.x = -LANE_X;
+    g.input.targetX = -LANE_X;
+    g.enemies.clear();
+  }
+  g.squad.setCount(16);
+  g.squad.iframes = 0;
+  g.squad.shieldTime = 0;
+  g.warningLane = "left";
+  g.warningImpactAt = g.time + 0.05;
+  g.step(0.2);
+  assert(g.squad.count >= 12, "1:20 后 16 人漏一条躲开不应掉到 9 人以下，得到 " + g.squad.count);
+  g.squad.setCount(8);
+  g.squad.iframes = 0;
+  g.squad.shieldTime = 0;
+  g.warningLane = "left";
+  g.warningImpactAt = g.time + 0.05;
+  g.squad.x = -LANE_X;
+  g.input.targetX = -LANE_X;
+  g.step(0.2);
+  assert(g.squad.count >= 4, "8 人漏一条躲开不应只剩 1 人，得到 " + g.squad.count);
+}
+
+{
+  const hold = new Game(mockPlatform());
+  hold.beginRun(1);
+  hold.squad.setCount(8);
+  const due = holdTime(1);
+  let stacked = false;
+  let sawMid = false;
+  while (hold.time < due - 0.2 && hold.state === "playing") {
+    hold.step(0.2);
+    hold.squad.setCount(8);
+    hold.squad.x = 0;
+    hold.input.targetX = 0;
+    hold.enemies.clear();
+    if (hold.time >= due - HOLD_SETTLE) {
+      const b = hold.getState().banner;
+      const text = b ? b.text : "";
+      if (text.includes("躲开") || text.includes("巷口") || text.includes("来袭") || text.includes("夹击")) stacked = true;
+      if (hold.gates.pool.active.some((x) => (x.lane === "mid" || Math.abs(x.x) < 0.6) && (x.kind === "add" || x.kind === "shield"))) sawMid = true;
+    }
+  }
+  assert(!stacked, "守住中道前十几秒不应再叠躲开、巷口或来袭");
+  assert(sawMid, "分叉前中道应有一小扇补人门或护盾，让分叉是新阶段开头");
+}
+
+{
+  const g = new Game(mockPlatform());
+  g.beginRun(1);
+  g.squad.setCount(20);
+  while (g.time < SCENE_SHIFT_AT + 0.4 && g.state === "playing") {
+    g.step(0.2);
+    g.squad.setCount(20);
+  }
+  assertEq(g.squad.weapon, "heavy", "入夜应补上重击");
+  const before = g.squad.weaponTime;
+  assert(before >= 45, "入夜重击应接近 50 秒，得到 " + before.toFixed(1));
+  g.gates.clear();
+  g.gates.spawn({ kind: "weapon", lane: "right", weapon: "heavy", label: "重击", z: 13.5 });
+  g.squad.x = LANE_X;
+  g.input.targetX = LANE_X;
+  const t0 = g.time;
+  while (g.time < t0 + 2 && g.state === "playing" && g.gates.pool.active.some((x) => x.kind === "weapon" && x.weapon === "heavy")) {
+    g.squad.x = LANE_X;
+    g.input.targetX = LANE_X;
+    g.enemies.clear();
+    g.step(0.1);
+  }
+  const expectMin = Math.max(0, SCENE_SHIFT_AT + NIGHT_HEAVY_LOCK - g.time) - 0.4;
+  assert(g.squad.weapon === "heavy" && g.squad.weaponTime >= Math.max(16, expectMin), "入夜后再走重击门不应把剩余时长打回 15 秒，得到 " + g.squad.weaponTime.toFixed(1));
 }
 
 console.log("");
