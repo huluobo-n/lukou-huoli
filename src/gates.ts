@@ -14,7 +14,7 @@ import { Pool } from "./pool";
 export interface Gate {
   alive: boolean;
   kind: GateKind;
-  lane: "left" | "right";
+  lane: "left" | "right" | "mid";
   x: number;
   z: number;
   value: number;
@@ -80,7 +80,7 @@ export class Gates {
   /** 同一时刻两道的门使用相同 pairKey，走过一道则另一道消失 */
   spawn(opts: {
     kind: GateKind;
-    lane: "left" | "right";
+    lane: "left" | "right" | "mid";
     value?: number;
     weapon?: WeaponId;
     label: string;
@@ -93,7 +93,7 @@ export class Gates {
     g.alive = true;
     g.kind = opts.kind;
     g.lane = opts.lane;
-    g.x = opts.lane === "left" ? -LANE_X : LANE_X;
+    g.x = opts.lane === "left" ? -LANE_X : opts.lane === "mid" ? 0 : LANE_X;
     g.z = opts.z ?? SPAWN_Z;
     g.value = opts.value ?? 0;
     g.weapon = opts.weapon ?? null;

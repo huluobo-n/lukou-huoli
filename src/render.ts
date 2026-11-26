@@ -50,7 +50,7 @@ const NIGHT_HOUSE_ZS = [14, 21, 31, 41, 50, 61, 73, 88];
 const FORK_HOUSE_ZS = [16, 28, 40, 55, 69, 84];
 
 function isNight(scene: SceneId): boolean {
-  return scene === "night" || scene === "fork";
+  return scene === "night" || scene === "fork" || scene === "storm";
 }
 
 export function drawWorld(
@@ -68,10 +68,10 @@ export function drawWorld(
   drawSky(ctx, camX, scene);
 
   const grass = ctx.createLinearGradient(0, HORIZON_Y, 0, CANVAS_H);
-  if (scene === "fork") {
-    grass.addColorStop(0, "#2E3A4E");
-    grass.addColorStop(0.45, "#243446");
-    grass.addColorStop(1, "#1C2A38");
+  if (scene === "storm" || scene === "fork") {
+    grass.addColorStop(0, scene === "storm" ? "#1A2438" : "#2E3A4E");
+    grass.addColorStop(0.45, scene === "storm" ? "#152033" : "#243446");
+    grass.addColorStop(1, scene === "storm" ? "#121A28" : "#1C2A38");
   } else if (scene === "night") {
     grass.addColorStop(0, "#3A4A5A");
     grass.addColorStop(0.45, "#2C3C3A");
@@ -89,6 +89,7 @@ export function drawWorld(
   if (scene === "fork") drawForkPlaza(ctx, camX, time, hold);
   drawRoadside(ctx, camX, time, scene);
   if (isNight(scene)) drawLamps(ctx, camX, time);
+  if (scene === "storm") drawRain(ctx, time);
 
   ctx.restore();
 }
@@ -115,7 +116,11 @@ function drawSky(ctx: CanvasRenderingContext2D, camX: number, scene: SceneId = "
     ctx.fillRect(0, 0, CANVAS_W, horizon + 20);
   }
   if (isNight(scene)) {
-    ctx.fillStyle = scene === "fork" ? "rgba(10, 16, 40, 0.62)" : "rgba(18, 24, 48, 0.55)";
+    ctx.fillStyle = scene === "storm"
+      ? "rgba(6, 10, 28, 0.7)"
+      : scene === "fork"
+        ? "rgba(10, 16, 40, 0.62)"
+        : "rgba(18, 24, 48, 0.55)";
     ctx.fillRect(0, 0, CANVAS_W, horizon + 24);
     // 几颗小星星
     ctx.fillStyle = "rgba(255,245,210,0.8)";
@@ -135,7 +140,7 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, sce
   const near = pr(-ROAD_HALF, 0, 8.5, camX);
   const nearR = pr(ROAD_HALF, 0, 8.5, camX);
 
-  ctx.fillStyle = scene === "night" ? "#4A5160" : "#8E9198";
+  ctx.fillStyle = scene === "storm" ? "#2E3848" : isNight(scene) ? "#4A5160" : "#8E9198";
   ctx.beginPath();
   ctx.moveTo(far.sx, far.sy);
   ctx.lineTo(farR.sx, farR.sy);
@@ -145,7 +150,7 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, sce
   ctx.fill();
 
   // 路边石
-  ctx.fillStyle = scene === "night" ? "#8A8070" : "#D9CDB6";
+  ctx.fillStyle = isNight(scene) ? "#8A8070" : "#D9CDB6";
   const curbL0 = pr(-ROAD_HALF - 0.45, 0, SPAWN_Z + 10, camX);
   const curbL1 = pr(-ROAD_HALF, 0, SPAWN_Z + 10, camX);
   const curbL2 = pr(-ROAD_HALF, 0, 8.5, camX);
@@ -177,11 +182,15 @@ function drawRoad(ctx: CanvasRenderingContext2D, camX: number, time: number, sce
     drawMedian(ctx, camX, 0.7, "#5C6574");
     drawDashLine(ctx, -2.15, camX, "#D6C98A", 5, time);
     drawDashLine(ctx, 2.15, camX, "#D6C98A", 5, time);
-  } else {
+  } else if (scene === "fork") {
     drawMedian(ctx, camX, 1.35, "#6A5A3A");
     drawDashLine(ctx, -2.55, camX, "#E8D48A", 5, time);
     drawDashLine(ctx, 2.55, camX, "#E8D48A", 5, time);
     drawDashLine(ctx, 0, camX, "#F4E7B0", 6, time);
+  } else {
+    // 雨夜：湿路面高光，中央不再是岔路口岛
+    drawDashLine(ctx, -2.4, camX, "#8EC4E0", 4, time);
+    drawDashLine(ctx, 2.4, camX, "#8EC4E0", 4, time);
   }
 }
 
@@ -312,13 +321,30 @@ function drawLamps(ctx: CanvasRenderingContext2D, camX: number, time: number): v
   }
 }
 
+
+function drawRain(ctx: CanvasRenderingContext2D, time: number): void {
+  ctx.save();
+  ctx.strokeStyle = "rgba(190, 215, 235, 0.28)";
+  ctx.lineWidth = 1.2;
+  const off = (time * 420) % 90;
+  for (let i = 0; i < 42; i++) {
+    const x = ((i * 73 + 18) % 720) + 8;
+    const y = ((i * 97 + off * 3) % 1100) + 160;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 7, y + 28);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number, scene: SceneId = "day"): void {
   type Prop = { kind: "tree" | "house"; side: -1 | 1; z: number; variant: number };
   const props: Prop[] = [];
   const trees = scene === "day" ? TREE_ZS : scene === "night" ? NIGHT_TREE_ZS : [];
   const houses = scene === "day" ? HOUSE_ZS : scene === "night" ? NIGHT_HOUSE_ZS : FORK_HOUSE_ZS;
   const treeSpan = scene === "night" ? 100 : 92;
-  const houseSpan = scene === "fork" ? 102 : 94;
+  const houseSpan = scene === "fork" || scene === "storm" ? 102 : 94;
   for (let i = 0; i < trees.length; i++) {
     props.push({ kind: "tree", side: -1, z: wrapZ(trees[i], time, 11, treeSpan), variant: i % 2 });
     if (scene === "day") {
@@ -326,8 +352,8 @@ function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number,
     }
   }
   for (let i = 0; i < houses.length; i++) {
-    const off = scene === "night" ? 7.2 : scene === "fork" ? 9.0 : 5.5;
-    props.push({ kind: "house", side: -1, z: wrapZ(houses[i], time, 14, houseSpan), variant: scene === "day" ? i % 4 : (i + 1) % 4 });
+    const off = scene === "night" ? 7.2 : scene === "fork" || scene === "storm" ? 9.0 : 5.5;
+    props.push({ kind: "house", side: -1, z: wrapZ(houses[i] + (scene === "storm" ? 3.1 : 0), time, 14, houseSpan), variant: scene === "day" ? i % 4 : (i + (scene === "storm" ? 3 : 1)) % 4 });
     props.push({ kind: "house", side: 1, z: wrapZ(houses[i] + off, time, 14, houseSpan), variant: (i + 2) % 4 });
   }
   const alleyZ = isNight(scene) ? wrapZ(38, time * 0.15, 22, 52) : -99;
@@ -342,13 +368,13 @@ function drawRoadside(ctx: CanvasRenderingContext2D, camX: number, time: number,
       const id: SpriteId = p.variant === 0 ? "tree_0" : "tree_1";
       drawSprite(ctx, id, q.sx, q.sy + 4 * k, 170 * k, { flip: p.side > 0 });
     } else {
-      const inset = scene === "fork" ? 5.6 : scene === "night" ? 3.55 : 4.35;
+      const inset = scene === "fork" || scene === "storm" ? 5.6 : scene === "night" ? 3.55 : 4.35;
       const x = p.side < 0 ? -ROAD_HALF - inset : ROAD_HALF + inset + 0.1;
       const q = pr(x, 0, p.z, camX);
       const k = q.scale;
       if (k < 0.08) continue;
       const id = ("house_" + p.variant) as SpriteId;
-      const h = scene === "night" ? 250 * k : scene === "fork" ? 260 * k : 230 * k;
+      const h = scene === "night" ? 250 * k : scene === "fork" || scene === "storm" ? 260 * k : 230 * k;
       drawSprite(ctx, id, q.sx, q.sy + 6 * k, h, { flip: p.side > 0 });
     }
   }

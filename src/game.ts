@@ -21,12 +21,12 @@ import {
   GOLD_CLOSE_BANNER,
   GOLD_WINDOW_LIFE,
   GOLD_WINDOW_LULL,
-  GOLD_WINDOW_SAFE,
   GOLD_WINDOW_Z,
   HOLD_DAMAGE,
   HOLD_DURATION,
   HOLD_MID,
   HOLD_TELEGRAPH,
+  LATE_REFILL,
   LANE_HALF,
   LANE_X,
   MAX_SQUAD,
@@ -34,7 +34,6 @@ import {
   MERCY_MAX_COUNT,
   MERCY_Z,
   NIGHT_SHIELD_DURATION,
-  NIGHT_WEAPON_MIN,
   PINCER_BANNER,
   PINCER_TELEGRAPH,
   PROP_EVENTS,
@@ -45,6 +44,10 @@ import {
   RUSH_TELEGRAPH,
   SCENE_BANNER,
   SCENE_SHIFT_AT,
+  STORM_BANNER,
+  STORM_DELAY,
+  STORM_PERIOD,
+  STORM_TELEGRAPH,
   SCRIPT_ENEMY_END,
   SHIELD_GATE_DURATION,
   TEAM_Z,
@@ -61,6 +64,7 @@ import {
   endlessHordeInterval,
   goldWindowTime,
   holdTime,
+  lateRefillAmount,
   inLane,
   inRightLaneGap,
   laneCenterX,
@@ -184,7 +188,7 @@ export class Game {
   private mercySpawned = false;
   private goldExpiresAt = 0;
   private nextGoldWindowI = 0;
-  private namedKind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold" | null = null;
+  private namedKind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold" | "storm" | null = null;
   private namedSpawnAt = 0;
   private namedUntil = 0;
   private namedSpawned = false;
@@ -199,6 +203,9 @@ export class Game {
   private holdStarted = false;
   private holdUntil = 0;
   private nextHoldAt = 0;
+  private pendingNightBanner = false;
+  private stormStarted = false;
+  private nextStormAt = 0;
   private alleyFacing: "both" | "left" | "right" = "both";
   paused = false;
   private running = false;
@@ -287,7 +294,7 @@ export class Game {
       scene: this.scene,
       shieldTime: this.squad.shieldTime,
       quiet: this.time < this.quietUntil,
-      goldSafe: this.time < this.goldSafeUntil,
+      goldSafe: this.isGoldWindowProtected(),
       hold: this.namedKind === "hold" || (this.holdStarted && this.time < this.holdUntil),
       legalPage: this.legalPage,
       legalScroll: this.legalScroll,
@@ -349,6 +356,9 @@ export class Game {
     this.holdStarted = false;
     this.holdUntil = 0;
     this.nextHoldAt = holdTime(this.runSeed);
+    this.pendingNightBanner = false;
+    this.stormStarted = false;
+    this.nextStormAt = 0;
     this.alleyFacing = "both";
     this.spawned.length = 0;
     this.squad.reset();
@@ -390,12 +400,14 @@ export class Game {
     this.spawnMercy();
     this.updateGold();
     this.spawnPropsDue();
+    this.relabelActiveGates();
     this.updateScene();
     this.updateWarning();
     this.updateRush();
     this.updateNamed();
     this.updateAlleyDrift();
     this.updateHold();
+    this.updateStorm();
     this.gates.update(dt);
     this.props.update(dt);
     const rightMul = this.time < this.rightHoldUntil ? 0 : 1;
@@ -544,10 +556,17 @@ export class Game {
       this.goldWindowOpen = true;
       this.hordeSkipUntil = Math.max(this.hordeSkipUntil, this.time + GOLD_WINDOW_LULL);
       this.rightHoldUntil = Math.max(this.rightHoldUntil, this.time + GOLD_WINDOW_LULL);
-      this.goldSafeUntil = Math.max(this.goldSafeUntil, this.time + GOLD_WINDOW_SAFE);
+      // 金门开着的整段，以及「金门关闭！」提示结束前，都不要出躲开右道
+      this.goldSafeUntil = Math.max(this.goldSafeUntil, this.goldExpiresAt + GOLD_CLOSE_BANNER);
       this.thinRightColumn();
       this.showNamed("gold", "右道×2！快切", 2.8, undefined, true);
     }
+  }
+
+  private isGoldWindowProtected(): boolean {
+    if (this.goldWindowOpen) return true;
+    if (this.namedKind === "goldEnd" && this.time < this.namedUntil) return true;
+    return this.time < this.goldSafeUntil && this.goldSafeUntil > 0;
   }
 
   private thinRightColumn(): void {
@@ -576,15 +595,27 @@ export class Game {
     if (this.scene === "day" && this.time >= SCENE_SHIFT_AT) {
       this.scene = "night";
       this.grantNightStart();
-      this.pushEventsPast(this.time + SCENE_BANNER + 1.6);
-      this.showNamed("scene", "进入夜路口！", SCENE_BANNER, undefined, true);
+      if (this.warningLane) {
+        // 先让躲开提示走完，再独占入夜横幅，避免盖住「躲开左道！」
+        this.pendingNightBanner = true;
+        const until = Math.max(this.warningImpactAt, this.time) + SCENE_BANNER + 2.2;
+        this.pushEventsPast(until);
+      } else {
+        this.showNightBanner();
+      }
     }
+    if (this.pendingNightBanner && !this.warningLane) this.showNightBanner();
+  }
+
+  private showNightBanner(): void {
+    this.pendingNightBanner = false;
+    this.showNamed("scene", "进入夜路口！", SCENE_BANNER, undefined, true);
+    this.pushEventsPast(this.time + SCENE_BANNER + 5.0);
   }
 
   private grantNightStart(): void {
-    if (this.squad.weapon === "pistol" || this.squad.weaponTime < NIGHT_WEAPON_MIN) {
-      this.squad.equip("heavy");
-    }
+    // 即便重击还剩几秒，也刷新到满时长，避免刚入夜最难的一段空成手枪
+    this.squad.equip("heavy");
     this.squad.grantShield(NIGHT_SHIELD_DURATION);
   }
 
@@ -597,7 +628,7 @@ export class Game {
   }
 
   private showNamed(
-    kind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold",
+    kind: "pincer" | "alley" | "gold" | "goldEnd" | "scene" | "hold" | "storm",
     text: string,
     duration: number,
     spawnAt?: number,
@@ -612,13 +643,14 @@ export class Game {
   }
 
   private currentBanner(): string | null {
+    if (this.warningLane) return this.warningLane === "left" ? "躲开左道！" : "躲开右道！";
     const exclusiveNamed =
       this.namedKind === "scene" ||
       this.namedKind === "gold" ||
       this.namedKind === "goldEnd" ||
-      this.namedKind === "hold";
+      this.namedKind === "hold" ||
+      this.namedKind === "storm";
     if (exclusiveNamed && this.time < this.namedUntil && this.bannerText) return this.bannerText;
-    if (this.warningLane) return this.warningLane === "left" ? "躲开左道！" : "躲开右道！";
     if (this.rushActive) return "左道来袭！";
     if (this.namedKind && this.time < this.namedUntil && this.bannerText) return this.bannerText;
     return null;
@@ -649,7 +681,8 @@ export class Game {
       this.namedSpawned = true;
     }
     if (this.namedKind || this.warningLane || this.rushActive || this.time < this.quietUntil) return;
-    if (this.time < this.exclusiveUntil || this.time < this.goldSafeUntil) return;
+    if (this.time < this.exclusiveUntil || this.isGoldWindowProtected()) return;
+    if (this.pendingNightBanner) return;
     if (this.time >= this.nextPincerAt && this.squad.count > 0) {
       this.showNamed("pincer", "左右夹击！", PINCER_TELEGRAPH + PINCER_BANNER, this.time + PINCER_TELEGRAPH);
       return;
@@ -669,17 +702,69 @@ export class Game {
           this.shake = 0.32;
           this.audio.play("red");
         }
+        this.beginStormChapter();
       }
       return;
     }
-    if (this.scene === "day" || this.time < this.nextHoldAt || this.squad.count <= 0) return;
+    if (this.stormStarted || this.scene === "storm" || this.scene === "day") return;
+    if (this.time < this.nextHoldAt || this.squad.count <= 0) return;
     if (this.warningLane || this.rushActive || this.namedKind === "pincer" || this.namedKind === "alley") return;
-    if (this.time < this.goldSafeUntil) return;
+    if (this.isGoldWindowProtected()) return;
     this.scene = "fork";
     this.holdStarted = true;
     this.holdUntil = this.time + HOLD_TELEGRAPH + HOLD_DURATION;
     this.showNamed("hold", "守住中道！", HOLD_TELEGRAPH + HOLD_DURATION, this.time + HOLD_TELEGRAPH, true);
     this.pushEventsPast(this.holdUntil + 1.4);
+    this.placeHoldMidReward();
+  }
+
+  private placeHoldMidReward(): void {
+    const list = this.gates.pool.active.slice();
+    for (const g of list) {
+      if (!g.alive || g.kind === "amp" || g.kind === "red") continue;
+      if (g.lane !== "mid" && g.z > 16) this.gates.pool.release(g);
+    }
+    const atCap = this.squad.count >= 20;
+    if (atCap) {
+      this.gates.spawn({ kind: "shield", lane: "mid", label: "护盾", z: 38 });
+    } else {
+      const v = lateRefillAmount(this.squad.count);
+      this.gates.spawn({ kind: "add", lane: "mid", value: v, label: "+" + v, z: 38 });
+    }
+  }
+
+  private beginStormChapter(): void {
+    this.scene = "storm";
+    this.stormStarted = true;
+    this.nextStormAt = this.time + STORM_DELAY;
+  }
+
+  private updateStorm(): void {
+    if (this.namedKind === "storm" && !this.namedSpawned && this.time >= this.namedSpawnAt) {
+      this.spawnStormPack();
+      this.namedSpawned = true;
+    }
+    if (!this.stormStarted || this.scene !== "storm") return;
+    if (this.namedKind || this.warningLane || this.rushActive) return;
+    if (this.time < this.exclusiveUntil || this.isGoldWindowProtected()) return;
+    if (this.time < this.nextStormAt || this.squad.count <= 0) return;
+    this.showNamed("storm", "雨夜推进！", STORM_TELEGRAPH + STORM_BANNER, this.time + STORM_TELEGRAPH, true);
+    this.nextStormAt = this.time + STORM_PERIOD;
+  }
+
+  private spawnStormPack(): void {
+    const types: EnemyId[] = this.time >= 200
+      ? ["bomber", "jumper", "shield", "splitter"]
+      : ["jumper", "sprinter", "bomber", "walker"];
+    for (let i = 0; i < types.length; i++) {
+      const left = i % 2 === 0;
+      const x = left ? -ALLEY_SIDE_X - 0.2 : ALLEY_SIDE_X + 0.2;
+      this.spawnEnemy(types[i], "mid", {
+        z: ALLEY_SPAWN_Z - i * 1.2,
+        x,
+        driftX: left ? LANE_X * 0.2 : -LANE_X * 0.2,
+      });
+    }
   }
 
   private spawnPincerPack(): void {
@@ -754,10 +839,10 @@ export class Game {
       }
       return;
     }
-    if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil) {
+    if (this.time >= this.nextWarningAt && this.squad.count > 0 && !this.rushActive && !this.namedKind && this.time >= this.quietUntil && this.time >= this.exclusiveUntil && !this.pendingNightBanner) {
       const lane = laneOfX(this.squad.x);
-      if (lane === "right" && this.time < this.goldSafeUntil) {
-        this.nextWarningAt = this.goldSafeUntil + 0.35;
+      if (lane === "right" && this.isGoldWindowProtected()) {
+        this.nextWarningAt = Math.max(this.goldSafeUntil, this.time) + 0.45;
         return;
       }
       this.warningLane = lane;
@@ -820,6 +905,29 @@ export class Game {
       this.rushSpawned = false;
       this.rushSpawnAt = this.time + RUSH_TELEGRAPH;
       this.rushUntil = this.time + RUSH_BANNER;
+    }
+  }
+
+  private relabelActiveGates(): void {
+    const list = this.gates.pool.active;
+    for (const g of list) {
+      if (!g.alive || g.kind === "amp" || g.kind === "red" || g.kind === "weapon") continue;
+      if (this.squad.count >= 20) {
+        if (g.kind === "add" || g.kind === "mul" || g.kind === "shield") {
+          g.kind = "shield";
+          g.value = 0;
+          g.weapon = null;
+          g.label = "护盾";
+        }
+        continue;
+      }
+      if (this.time >= SCENE_SHIFT_AT && (g.kind === "add" || g.kind === "mul" || g.kind === "shield")) {
+        const v = lateRefillAmount(this.squad.count);
+        g.kind = "add";
+        g.value = v;
+        g.weapon = null;
+        g.label = "+" + v;
+      }
     }
   }
 
@@ -889,7 +997,7 @@ export class Game {
       for (const g of gateList) {
         if (!g.alive || g.kind === "amp" || g.stationary) continue;
         if (!this.bulletCrosses(b, g.z, g.x)) continue;
-        chargeGate(g);
+        chargeGate(g, this.time >= SCENE_SHIFT_AT ? LATE_REFILL : undefined);
         this.particles.sparks(g.x, 1.2, g.z);
         this.bullets.pool.release(b);
         consumed = true;
@@ -1192,6 +1300,14 @@ export class Game {
       items.push({
         z: 26,
         draw: () => drawLaneWarning(ctx, "mid", camX, this.namedSpawnAt - this.time, "hold"),
+      });
+    } else if (this.namedKind === "storm" && this.state === "playing") {
+      items.push({
+        z: 28,
+        draw: () => {
+          drawLaneWarning(ctx, "left", camX, this.namedSpawnAt - this.time, "alley");
+          drawLaneWarning(ctx, "right", camX, this.namedSpawnAt - this.time, "alley");
+        },
       });
     }
     for (const g of this.gates.pool.active) {

@@ -159,6 +159,10 @@ export const WARNING_TELEGRAPH = 1.2;
 export const WARNING_DAMAGE = 7;
 
 export function warningPeriod(t: number): number {
+  // 入夜到岔路口前拉开间隔，避免躲开/巷口/夹击叠在一起，让人能打到 2:30
+  if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
+    return Math.max(12, 14.0 - Math.max(0, t - SCENE_SHIFT_AT) * 0.015);
+  }
   return Math.max(7, 13.0 - Math.max(0, t - WARNING_FIRST) * 0.07);
 }
 
@@ -169,6 +173,9 @@ export const RUSH_SPAWN_Z = 42;
 export const RUSH_BANNER = 2.4;
 
 export function rushPeriod(t: number): number {
+  if (t >= SCENE_SHIFT_AT && t < HOLD_FIRST + 8) {
+    return Math.max(18, 20.0 - Math.max(0, t - SCENE_SHIFT_AT) * 0.02);
+  }
   return Math.max(10, 16.5 - Math.max(0, t - RUSH_FIRST) * 0.05);
 }
 
@@ -196,7 +203,7 @@ export const GOLD_WINDOW_LIFE = 10;
 export const GOLD_WINDOW_LULL = 4.8;
 export const GOLD_WINDOW_SAFE = 6.5;
 export const GOLD_WINDOW_Z = 32;
-export const GOLD_WINDOW_BASE = [58, 94, 132];
+export const GOLD_WINDOW_BASE = [58, 108, 172];
 export const GOLD_CLOSE_BANNER = 1.6;
 
 /** 第一次左道来袭后的安静重整，再进入具名事件 */
@@ -204,11 +211,12 @@ export const RUSH_QUIET = 5.2;
 export const PINCER_FIRST = 52;
 export const PINCER_TELEGRAPH = 1.25;
 export const PINCER_BANNER = 2.6;
-export const PINCER_PERIOD = 28;
-export const ALLEY_FIRST = 78;
+export const PINCER_PERIOD = 40;
+export const PINCER_NIGHT_FIRST = 118;
+export const ALLEY_FIRST = 88;
 export const ALLEY_TELEGRAPH = 1.3;
 export const ALLEY_BANNER = 2.6;
-export const ALLEY_PERIOD = 30;
+export const ALLEY_PERIOD = 48;
 export const ALLEY_SPAWN_Z = 40;
 export const ALLEY_SIDE_X = 8.0;
 
@@ -219,6 +227,17 @@ export const HOLD_DURATION = 5.2;
 export const HOLD_DAMAGE = 8;
 export const HOLD_MID = 1.15;
 export const ENDLESS_GATE_PERIOD_LATE = 14;
+
+/** 入夜后小幅补人，极低人数时可补 +2，但绝不能一扇补满 */
+export const LATE_REFILL = 1;
+export const LATE_REFILL_LOW = 2;
+export const LATE_REFILL_LOW_COUNT = 6;
+
+/** 守住中道结束后进入雨夜推进，避免夜路口循环贯穿整段后期 */
+export const STORM_DELAY = 8;
+export const STORM_BANNER = 2.8;
+export const STORM_PERIOD = 34;
+export const STORM_TELEGRAPH = 1.3;
 
 /** 错过第一扇加人门时，右道补一扇小 +2，不改开局 10 秒压力 */
 export const MERCY_AT = 10.2;
@@ -237,8 +256,8 @@ export function goldWindowTime(index: number, seed: number): number {
 }
 
 export function pincerTime(index: number, seed: number): number {
-  const span = index === 0 ? 2.0 : 4.5;
-  return PINCER_FIRST + index * PINCER_PERIOD + seedOffset(seed, 31 + index, span);
+  if (index === 0) return PINCER_FIRST + seedOffset(seed, 31, 2.0);
+  return PINCER_NIGHT_FIRST + (index - 1) * PINCER_PERIOD + seedOffset(seed, 31 + index, 4.5);
 }
 
 export function alleyTime(index: number, seed: number): number {
@@ -249,8 +268,12 @@ export function holdTime(seed: number): number {
   return HOLD_FIRST + seedOffset(seed, 71, 8);
 }
 
+export function stormTime(index: number, seed: number): number {
+  return STORM_PERIOD * index + seedOffset(seed, 113 + index, 5.0);
+}
+
 export type AlleySide = "both" | "left" | "right";
-export type SceneId = "day" | "night" | "fork";
+export type SceneId = "day" | "night" | "fork" | "storm";
 
 export function alleySide(index: number, seed: number): AlleySide {
   const x = Math.imul(seed ^ ((91 + index) * 0x9e3779b9), 0x85ebca6b) >>> 0;
@@ -264,20 +287,22 @@ export function alleyBannerText(side: AlleySide): string {
   return "巷口来袭！左右插进！";
 }
 
-/** 入夜或满编后，减弱补人并把不再加人的门改成护盾，避免仍显示 +N */
+/** 满编时效果是护盾就必须写「护盾」；入夜后掉人只小补，极低人数仍补人而不是只给护盾。 */
+export function lateRefillAmount(count: number): number {
+  return count <= LATE_REFILL_LOW_COUNT ? LATE_REFILL_LOW : LATE_REFILL;
+}
+
 export function softenGate(ev: TimelineEvent, time: number, count: number, peak: number): TimelineEvent {
-  if (time < SCENE_SHIFT_AT) return ev;
   if (ev.kind !== "gate") return ev;
   if (ev.gate !== "add" && ev.gate !== "mul") return ev;
-  if (peak >= MAX_SQUAD && count >= MAX_SQUAD) {
+  if (count >= MAX_SQUAD) {
     return { ...ev, gate: "shield", value: undefined, weapon: undefined, label: "护盾" };
   }
-  if (peak >= MAX_SQUAD) {
-    return { ...ev, gate: "add", value: 1, weapon: undefined, label: "+1" };
+  if (time >= SCENE_SHIFT_AT) {
+    const v = lateRefillAmount(count);
+    return { ...ev, gate: "add", value: v, weapon: undefined, label: "+" + v };
   }
-  if (ev.gate === "mul") return { ...ev, gate: "add", value: 2, weapon: undefined, label: "+2" };
-  const v = Math.max(1, Math.floor((ev.value ?? 3) / 2));
-  return { ...ev, value: v, label: "+" + v };
+  return ev;
 }
 
 export function cageRewardAt(time: number, peak: number): number {
